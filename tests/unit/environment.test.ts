@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseEnvironment } from '../../src/shared/config/env.js';
+import { parseEnvironment } from '../../src/shared/config/environment.js';
 
 describe('parseEnvironment', () => {
   it('rejects a missing DATABASE_URL', () => {

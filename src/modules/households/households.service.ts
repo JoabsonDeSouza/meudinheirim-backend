@@ -533,20 +533,24 @@ export async function leaveHousehold(householdId: string, userId: string): Promi
  * Used for lazy creation when user needs a household (e.g., first transaction/account)
  */
 export async function createPersonalHousehold(userId: string, email: string): Promise<{ id: string; name: string; createdAt: Date; updatedAt: Date; }> {
-  // Check if user already has a household
-  const existingMembership = await prisma.householdMember.findFirst({
-    where: { userId },
-    include: { household: true },
-  });
-
-  if (existingMembership) {
-    return existingMembership.household;
-  }
-
-  // Create personal household with user as owner
-  const defaultName = email.split('@')[0] || 'My Finances';
-
+  // Serialize concurrent creation attempts for the same user so exactly one
+  // personal household exists even under parallel first-login requests.
   return await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`personal-household:${userId}`}))`;
+
+    const existingMembership = await tx.householdMember.findFirst({
+      where: { userId },
+      include: { household: true },
+      orderBy: { household: { createdAt: 'asc' } },
+    });
+
+    if (existingMembership) {
+      return existingMembership.household;
+    }
+
+    // Create personal household with user as owner
+    const defaultName = email.split('@')[0] || 'My Finances';
+
     const household = await tx.household.create({
       data: {
         name: `${defaultName}'s Finances`,

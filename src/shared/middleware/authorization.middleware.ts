@@ -45,40 +45,38 @@ export async function getUserByFirebaseUid(firebaseUid: string, email: string): 
 
   const trimmedEmail = email.trim();
 
-  // First, try to find user by firebaseUid
-  let user = await prisma.user.findUnique({
-    where: { firebaseUid },
-  });
+  // Serialize concurrent first-logins for the same identity: exactly one
+  // transaction may create/update the user row.
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`user-uid:${firebaseUid}`}))`;
 
-  if (user) {
-    return user;
-  }
+    const byEmail = await tx.user.findUnique({ where: { email: trimmedEmail } });
+    if (byEmail && byEmail.firebaseUid === firebaseUid) {
+      return byEmail;
+    }
 
-  // If not found by firebaseUid, check if user exists with same email
-  // This can happen if Firebase UID changed or there's data inconsistency
-  const existingUserByEmail = await prisma.user.findUnique({
-    where: { email: trimmedEmail },
-  });
+    const byUid = await tx.user.findUnique({ where: { firebaseUid } });
+    if (byUid) {
+      return byUid;
+    }
 
-  if (existingUserByEmail) {
-    // Update the existing user's firebaseUid to match current Firebase auth
-    // This handles cases where Firebase UID changed or was updated
-    user = await prisma.user.update({
-      where: { id: existingUserByEmail.id },
-      data: { firebaseUid },
+    if (byEmail) {
+      // Same email, different Firebase UID: rebind the row.
+      return tx.user.update({
+        where: { id: byEmail.id },
+        data: { firebaseUid },
+      });
+    }
+
+    return tx.user.create({
+      data: {
+        firebaseUid,
+        email: trimmedEmail,
+      },
     });
-    return user;
-  }
-
-  // User doesn't exist, create new one
-  user = await prisma.user.create({
-    data: {
-      firebaseUid,
-      email: trimmedEmail,
-    },
   });
 
-  return user;
+  return created;
 }
 
 /**

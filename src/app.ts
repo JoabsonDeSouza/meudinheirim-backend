@@ -208,7 +208,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       // In production, check ALLOWED_ORIGINS env var for additional origins
       const allowedOrigins = env.ALLOWED_ORIGINS;
       if (allowedOrigins) {
-        const allowedList = allowedOrigins.split(',').map(o => o.trim()).filter(Boolean);
+        const allowedList = allowedOrigins.split(',').map((o: string) => o.trim()).filter(Boolean);
         if (allowedList.includes(origin)) {
           console.log(`[CORS] Allowing origin from ALLOWED_ORIGINS: ${origin}`);
           callback(null, true);
