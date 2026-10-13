@@ -13,6 +13,7 @@ import { errorHandler } from './shared/errors/error-handler.js';
 
 // Routes
 import { authRoutes } from './modules/auth/index.js';
+import { authConfigRoutes } from './modules/auth/auth-config.routes.js';
 import { userRoutes } from './modules/users/index.js';
 import { householdRoutes } from './modules/households/index.js';
 import { accountRoutes } from './modules/accounts/index.js';
@@ -291,6 +292,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   // ============================================================================
 
   await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(authConfigRoutes, { prefix: '/v1/auth' });
   await app.register(userRoutes, { prefix: '/users' });
   await app.register(householdRoutes, { prefix: '/households' });
   await app.register(accountRoutes, { prefix: '/accounts' });
