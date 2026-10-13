@@ -1,7 +1,6 @@
 import { prisma } from '../../shared/db/prisma.js';
 import { parseMonthFilter } from '../../shared/utils/pagination.js';
-import { AccountType, TransactionType, CategoryType, GENERAL_BUDGET_CATEGORY, getCategoriesByType, getCategoryColor, CATEGORY_NAME_DISPLAY } from '../../shared/enums/index.js';
-import { isCustomCategoryName, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
+import { AccountType, TransactionType, GENERAL_BUDGET_CATEGORY, isCategoryOfType, CategoryType } from '../../shared/enums/index.js';
 import type {
   DashboardOverviewQuery,
   DashboardOverviewResponse,
@@ -92,10 +91,9 @@ export async function getDashboardOverview(query: DashboardOverviewQuery): Promi
   ]);
 
   // Infer transaction type from category for recurring transactions
-  const incomeCategories = getCategoriesByType(CategoryType.INCOME);
   const recurringTransactions = recurringTransactionsRaw.map(rt => ({
     ...rt,
-    type: incomeCategories.includes(rt.categoryName as any) 
+    type: isCategoryOfType(CategoryType.INCOME, rt.categoryName) 
       ? TransactionType.INCOME 
       : TransactionType.EXPENSE,
   }));

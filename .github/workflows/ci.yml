@@ -37,6 +37,8 @@ jobs:
         run: npm ci
       - name: Generate Prisma client
         run: npm run db:generate
+      - name: Forbidden typing gate
+        run: npm run gate:forbidden-typing
       - name: Lint
         run: npm run lint
       - name: Typecheck

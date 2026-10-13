@@ -4,7 +4,6 @@ import { getUserByFirebaseUid } from '../../shared/middleware/authorization.midd
 import { prisma } from '../../shared/db/prisma.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 import {
-  getUserById,
   updateUserPreferences,
   getOrCreateReferralCode,
   deleteUser,
@@ -13,7 +12,7 @@ import {
 import { updateUserPreferencesSchema } from './users.schema.js';
 import { getReferralCount } from './referrals.service.js';
 
-export async function userRoutes(app: FastifyInstance) {
+export async function userRoutes(app: FastifyInstance): Promise<void> {
   /**
    * GET /users/me
    * Get current user info and preferences

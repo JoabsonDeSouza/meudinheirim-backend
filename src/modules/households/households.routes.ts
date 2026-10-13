@@ -18,7 +18,7 @@ import {
 } from './households.schema.js';
 import * as householdsService from './households.service.js';
 
-export async function householdRoutes(app: FastifyInstance) {
+export async function householdRoutes(app: FastifyInstance): Promise<void> {
   // All routes require authentication
   app.addHook('preHandler', authMiddleware());
 

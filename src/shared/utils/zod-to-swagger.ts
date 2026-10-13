@@ -1,10 +1,11 @@
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import type { JSONSchema7 } from 'json-schema';
 import type { ZodSchema } from 'zod';
 
 /**
  * Convert a Zod schema to Fastify/JSON Schema format for Swagger
  */
-export function zodToFastifySchema(zodSchema: ZodSchema): any {
+export function zodToFastifySchema(zodSchema: ZodSchema): JSONSchema7 {
   const jsonSchema = zodToJsonSchema(zodSchema, {
     target: 'openApi3',
     $refStrategy: 'none', // Inline all schemas to avoid $ref issues

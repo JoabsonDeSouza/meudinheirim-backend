@@ -8,7 +8,7 @@ import { getOrCreatePersonalHousehold } from '../households/households.service.j
 import { processReferralCode } from '../users/referrals.service.js';
 import { prisma } from '../../shared/db/prisma.js';
 
-export async function authRoutes(app: FastifyInstance) {
+export async function authRoutes(app: FastifyInstance): Promise<void> {
   /**
    * GET /auth/me
    * Get current user info

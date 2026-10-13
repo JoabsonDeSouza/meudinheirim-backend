@@ -1,12 +1,17 @@
+import type { AccountType as Prisma_AccountType } from '../../generated/prisma/enums.js';
+import type { TransactionType as Prisma_TransactionType } from '../../generated/prisma/enums.js';
+import type { AccountStatus as Prisma_AccountStatus } from '../../generated/prisma/enums.js';
+
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../../shared/errors/index.js';
 import {
   createPaginatedResponse,
+  type PaginatedResponse,
   buildPaginationArgs,
   parseMonthFilter,
 } from '../../shared/utils/pagination.js';
-import { CategoryType, getCategoriesByType, getCategoryColor, AccountType, TransactionType, CATEGORY_NAME_DISPLAY } from '../../shared/enums/index.js';
+import { CategoryType, getCategoriesByType, getColorForCategory, isCategoryOfType, AccountType, TransactionType, CATEGORY_NAME_DISPLAY } from '../../shared/enums/index.js';
 import { CategoryName } from '../../shared/enums/index.js';
 import { isCustomCategoryName, toCustomCategoryId, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import { executeRecurringTransaction } from '../recurring-transactions/recurring-transactions.service.js';
@@ -19,7 +24,6 @@ import type {
   BatchCreateTransactionsInput,
   BatchDeleteTransactionsInput,
   PayInvoiceInput,
-  CreditCardInvoiceParams,
   UndoPaymentParams,
 } from './transactions.schema.js';
 
@@ -43,7 +47,7 @@ function calculateBalanceChange(amount: number, isIncome: boolean, accountType: 
  * @param input Transaction input data
  * @param userId Optional user ID - if provided, allows using personal accounts in shared household
  */
-export async function createTransaction(input: CreateTransactionInput, userId?: string) {
+export async function createTransaction(input: CreateTransactionInput, userId?: string): Promise<{ amount: number; splits: { amount: number; user: { id: string; email: string; displayName: string | null; }; id: string; createdAt: Date; updatedAt: Date; paid: boolean; userId: string; transactionId: string; paidAt: Date | null; }[]; account: { id: string; name: string; type: Prisma_AccountType; } | null; fromAccount: { id: string; name: string; type: Prisma_AccountType; } | null; toAccount: { id: string; name: string; type: Prisma_AccountType; } | null; relatedAccount: { id: string; name: string; type: Prisma_AccountType; } | null; id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }> {
   // householdId must be provided (resolved in routes via ensurePersonalHousehold)
   if (!input.householdId) {
     throw new BadRequestError('householdId is required');
@@ -157,16 +161,22 @@ export async function createTransaction(input: CreateTransactionInput, userId?: 
   let transactionType: TransactionType.INCOME | TransactionType.EXPENSE;
   if (input.type === TransactionType.INCOME || input.type === TransactionType.EXPENSE) {
     transactionType = input.type;
-  } else if (isCustomCategoryName(categoryName!)) {
-    const customId = toCustomCategoryId(categoryName!)!;
+  } else if (categoryName === undefined) {
+    throw new BadRequestError('A category or a transaction type is required');
+  } else if (isCustomCategoryName(categoryName)) {
+    const customId = toCustomCategoryId(categoryName);
+    if (customId === null) {
+      throw new BadRequestError('Custom category id is invalid');
+    }
     const cat = await prisma.category.findFirst({ where: { id: customId, householdId } });
     if (!cat) throw new BadRequestError('Custom category not found or does not belong to this household');
     transactionType = cat.type as TransactionType.INCOME | TransactionType.EXPENSE;
   } else {
-    const isInc = getCategoriesByType(CategoryType.INCOME).includes(categoryName as any);
+    const isInc = isCategoryOfType(CategoryType.INCOME, categoryName);
     transactionType = isInc ? TransactionType.INCOME : TransactionType.EXPENSE;
   }
-  const isIncomeForBalance = (t: TransactionType) => t === TransactionType.INCOME;
+  type IsIncomeForBalance = (t: TransactionType) => boolean;
+const isIncomeForBalance: IsIncomeForBalance = (t: TransactionType) => t === TransactionType.INCOME;
 
   // Create transaction and update balance in a single transaction
   const isPaid = input.paid !== undefined ? input.paid : true;
@@ -503,7 +513,7 @@ export async function createTransaction(input: CreateTransactionInput, userId?: 
 /**
  * Get transaction by ID
  */
-export async function getTransaction(transactionId: string) {
+export async function getTransaction(transactionId: string): Promise<{ amount: number; splits: { amount: number; user: { id: string; email: string; displayName: string | null; }; id: string; createdAt: Date; updatedAt: Date; paid: boolean; userId: string; transactionId: string; paidAt: Date | null; }[]; account: { id: string; name: string; type: Prisma_AccountType; } | null; fromAccount: { id: string; name: string; type: Prisma_AccountType; } | null; toAccount: { id: string; name: string; type: Prisma_AccountType; } | null; relatedAccount: { id: string; name: string; type: Prisma_AccountType; } | null; id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }> {
   const transaction = await prisma.transaction.findUnique({
     where: { id: transactionId },
     include: {
@@ -550,7 +560,7 @@ export async function getTransaction(transactionId: string) {
 export async function getTransactionWithHousehold(
   transactionId: string,
   householdId: string
-) {
+): Promise<{ amount: number; splits: { amount: number; user: { id: string; email: string; displayName: string | null; }; id: string; createdAt: Date; updatedAt: Date; paid: boolean; userId: string; transactionId: string; paidAt: Date | null; }[]; account: { id: string; name: string; type: Prisma_AccountType; } | null; fromAccount: { id: string; name: string; type: Prisma_AccountType; } | null; toAccount: { id: string; name: string; type: Prisma_AccountType; } | null; relatedAccount: { id: string; name: string; type: Prisma_AccountType; } | null; id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }> {
   const transaction = await prisma.transaction.findFirst({
     where: {
       id: transactionId,
@@ -597,7 +607,7 @@ export async function getTransactionWithHousehold(
 /**
  * List transactions with filters and cursor-based pagination
  */
-export async function listTransactions(query: ListTransactionsQuery) {
+export async function listTransactions(query: ListTransactionsQuery): Promise<PaginatedResponse<{ amount: number; splits: { amount: number; user: { id: string; email: string; displayName: string | null; }; id: string; createdAt: Date; updatedAt: Date; paid: boolean; userId: string; transactionId: string; paidAt: Date | null; }[]; account: { id: string; name: string; type: Prisma_AccountType; } | null; fromAccount: { id: string; name: string; type: Prisma_AccountType; } | null; toAccount: { id: string; name: string; type: Prisma_AccountType; } | null; relatedAccount: { id: string; name: string; type: Prisma_AccountType; } | null; id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }>> {
   const {
     householdId,
     accountId,
@@ -711,7 +721,7 @@ export async function updateTransaction(
   transactionId: string,
   householdId: string,
   input: UpdateTransactionInput
-) {
+): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; } | null; id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }> {
   const existingTransaction = await prisma.transaction.findFirst({
     where: { id: transactionId, householdId },
   });
@@ -977,7 +987,7 @@ export async function updateTransaction(
   // Check budget thresholds and create notifications if needed (async, don't block)
   // Only check for expense transactions with a category that are paid
   const finalCategoryName = newCategoryName;
-  const finalTransactionType = getCategoriesByType(CategoryType.INCOME).includes(finalCategoryName as any)
+  const finalTransactionType = isCategoryOfType(CategoryType.INCOME, finalCategoryName)
     ? TransactionType.INCOME
     : TransactionType.EXPENSE;
   
@@ -1004,7 +1014,7 @@ export async function updateTransaction(
 /**
  * Delete transaction and revert account balance
  */
-export async function deleteTransaction(transactionId: string, householdId: string) {
+export async function deleteTransaction(transactionId: string, householdId: string): Promise<void> {
   const transaction = await prisma.transaction.findFirst({
     where: { id: transactionId, householdId },
     include: {
@@ -1143,7 +1153,7 @@ export async function deleteTransaction(transactionId: string, householdId: stri
 /**
  * Batch create transactions
  */
-export async function batchCreateTransactions(input: BatchCreateTransactionsInput) {
+export async function batchCreateTransactions(input: BatchCreateTransactionsInput): Promise<{ count: number; }> {
   // householdId must be provided (resolved in routes via ensurePersonalHousehold)
   if (!input.householdId) {
     throw new BadRequestError('householdId is required');
@@ -1176,7 +1186,7 @@ export async function batchCreateTransactions(input: BatchCreateTransactionsInpu
   function isIncomeForCategory(categoryName: string): boolean {
     const ct = customTypeMap.get(categoryName);
     if (ct) return ct === CategoryType.INCOME;
-    return getCategoriesByType(CategoryType.INCOME).includes(categoryName as any);
+    return isCategoryOfType(CategoryType.INCOME, categoryName);
   }
 
   // Calculate balance changes per account (only for paid transactions)
@@ -1253,7 +1263,7 @@ export async function batchCreateTransactions(input: BatchCreateTransactionsInpu
 /**
  * Batch delete transactions
  */
-export async function batchDeleteTransactions(input: BatchDeleteTransactionsInput) {
+export async function batchDeleteTransactions(input: BatchDeleteTransactionsInput): Promise<{ count: number; }> {
   const { householdId, transactionIds } = input;
 
   // Get all transactions to calculate balance reversals
@@ -1331,7 +1341,7 @@ export async function batchDeleteTransactions(input: BatchDeleteTransactionsInpu
 /**
  * Get transaction summary (income, expenses, balance) for a period
  */
-export async function getTransactionSummary(query: TransactionSummaryQuery) {
+export async function getTransactionSummary(query: TransactionSummaryQuery): Promise<{ income: number; expenses: number; balance: number; transactionCount: number; }> {
   const { householdId, month, startDate, endDate } = query;
 
   // Build date filter
@@ -1358,8 +1368,6 @@ export async function getTransactionSummary(query: TransactionSummaryQuery) {
     },
   });
 
-  const incomeCategories = getCategoriesByType(CategoryType.INCOME);
-  const expenseCategories = getCategoriesByType(CategoryType.EXPENSE);
 
   let income = 0;
   let expenses = 0;
@@ -1385,9 +1393,9 @@ export async function getTransactionSummary(query: TransactionSummaryQuery) {
       expenses += Math.abs(amount);
     } else if (t.categoryName) {
       // Fallback to category-based detection (legacy)
-      if (incomeCategories.includes(t.categoryName as any)) {
+      if (isCategoryOfType(CategoryType.INCOME, t.categoryName)) {
         income += amount;
-      } else if (expenseCategories.includes(t.categoryName as any)) {
+      } else if (isCategoryOfType(CategoryType.EXPENSE, t.categoryName)) {
         expenses += Math.abs(amount);
       }
     }
@@ -1404,7 +1412,7 @@ export async function getTransactionSummary(query: TransactionSummaryQuery) {
 /**
  * Get spending by category for a period
  */
-export async function getSpendingByCategory(query: TransactionSummaryQuery) {
+export async function getSpendingByCategory(query: TransactionSummaryQuery): Promise<{ categoryName: string; categoryColor: string; total: number; count: number; }[]> {
   const { householdId, month, startDate, endDate } = query;
 
   // Build date filter
@@ -1448,7 +1456,7 @@ export async function getSpendingByCategory(query: TransactionSummaryQuery) {
     if (!r.categoryName) return null;
     const color = isCustomCategoryName(r.categoryName)
       ? (customColorMap.get(r.categoryName) ?? '#64748B')
-      : getCategoryColor(r.categoryName as any);
+      : getColorForCategory(r.categoryName);
     return {
       categoryName: r.categoryName,
       categoryColor: color,
@@ -1461,7 +1469,7 @@ export async function getSpendingByCategory(query: TransactionSummaryQuery) {
 /**
  * Get monthly recap with insights and statistics
  */
-export async function getMonthlyRecap(query: { householdId: string; month?: string }) {
+export async function getMonthlyRecap(query: { householdId: string; month?: string }): Promise<{ month: string; summary: { income: number; expenses: number; balance: number; transactionCount: number; }; comparison: { incomeChange: number; expenseChange: number; balanceChange: number; prevIncome: number; prevExpenses: number; prevBalance: number; }; topCategory: { categoryName: string; categoryDisplayName: string; total: number; count: number; color: string; } | null; largestExpense: { amount: number; description: string; categoryName: string | null; date: Date; } | null; categoryBreakdown: { categoryName: string; categoryDisplayName: string; total: number; count: number; color: string; }[]; }> {
   const { householdId, month } = query;
 
   // Determine month to analyze (default to current month)
@@ -1511,8 +1519,6 @@ export async function getMonthlyRecap(query: { householdId: string; month?: stri
     },
   });
 
-  const incomeCategories = getCategoriesByType(CategoryType.INCOME);
-  const expenseCategories = getCategoriesByType(CategoryType.EXPENSE);
 
   // Calculate current month stats
   let income = 0;
@@ -1590,7 +1596,7 @@ export async function getMonthlyRecap(query: { householdId: string; month?: stri
     if (!topCategory || data.total > topCategory.total) {
       const color = isCustomCategoryName(categoryName)
         ? (customColorMap.get(categoryName) ?? '#64748B')
-        : getCategoryColor(categoryName as any);
+        : getColorForCategory(categoryName);
       const displayName = isCustomCategoryName(categoryName)
         ? (customNameMap.get(categoryName) ?? categoryName)
         : (CATEGORY_NAME_DISPLAY[categoryName as CategoryName] || categoryName);
@@ -1649,7 +1655,7 @@ export async function getMonthlyRecap(query: { householdId: string; month?: stri
       .map(([categoryName, data]) => {
         const color = isCustomCategoryName(categoryName)
           ? (customColorMap.get(categoryName) ?? '#64748B')
-          : getCategoryColor(categoryName as any);
+          : getColorForCategory(categoryName);
         const displayName = isCustomCategoryName(categoryName)
           ? (customNameMap.get(categoryName) ?? categoryName)
           : (CATEGORY_NAME_DISPLAY[categoryName as CategoryName] || categoryName);
@@ -1671,7 +1677,7 @@ export async function getMonthlyRecap(query: { householdId: string; month?: stri
  * Get daily spending heatmap data for a month
  * Uses database aggregation for optimal performance
  */
-export async function getSpendingHeatmap(householdId: string, month?: string) {
+export async function getSpendingHeatmap(householdId: string, month?: string): Promise<{ month: string; data: { day: number; amount: number; }[]; total: number; daysInMonth: number; }> {
   // Default to current month if not provided
   const targetMonth = month || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
   
@@ -1744,7 +1750,7 @@ export async function calculateCreditCardInvoice(
   month: string,
   householdId: string,
   pagination?: { limit?: number; cursor?: string }
-) {
+): Promise<{ data: { accountId: string; month: string; previousBalance: number; currentExpenses: number; currentPayments: number; total: number; isPaid: boolean; paymentTransactions: { id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }[]; invoiceTransactions: { amount: number; id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }[]; }; pagination: { nextCursor: string | null; hasMore: boolean; total: number; }; }> {
   // Verify account is a credit card
   const account = await prisma.account.findFirst({
     where: { id: accountId, householdId, isActive: true },
@@ -1764,7 +1770,6 @@ export async function calculateCreditCardInvoice(
   // Se closingDay estiver definido, usar período de fechamento; senão, usar mês completo
   let invoiceStart: Date;
   let invoiceEnd: Date;
-  let previousPeriodStart: Date;
   
   if (account.closingDay) {
     const closingDay = account.closingDay;
@@ -1772,12 +1777,10 @@ export async function calculateCreditCardInvoice(
     // Exemplo: se closingDay = 7 e month = 2024-02, a fatura é de 7/jan até 6/fev
     invoiceStart = new Date(year, monthNum - 2, closingDay); // Mês anterior, dia de fechamento
     invoiceEnd = new Date(year, monthNum - 1, closingDay - 1, 23, 59, 59, 999); // Mês atual, dia anterior ao fechamento
-    previousPeriodStart = new Date(year, monthNum - 3, closingDay); // Período anterior
   } else {
     // Comportamento padrão: mês completo (compatibilidade com contas antigas)
     invoiceStart = new Date(year, monthNum - 1, 1);
     invoiceEnd = new Date(year, monthNum, 0, 23, 59, 59, 999);
-    previousPeriodStart = new Date(year, monthNum - 2, 1);
   }
 
   // Get all transactions of the credit card before the invoice period
@@ -1796,7 +1799,7 @@ export async function calculateCreditCardInvoice(
     if (!t.categoryName) return sum;
     // Use transaction type if available, otherwise infer from category
     const isIncome = t.type === TransactionType.INCOME || 
-      (t.type !== TransactionType.EXPENSE && getCategoriesByType(CategoryType.INCOME).includes(t.categoryName as any));
+      (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
     if (isIncome) {
       return sum - t.amount.toNumber(); // Income decreases debt
     } else {
@@ -1851,7 +1854,7 @@ export async function calculateCreditCardInvoice(
         } else if (t.accountId === accountId && t.categoryName) {
           // Use transaction type if available, otherwise infer from category
           const isIncome = t.type === TransactionType.INCOME || 
-            (t.type !== TransactionType.EXPENSE && getCategoriesByType(CategoryType.INCOME).includes(t.categoryName as any));
+            (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
           if (isIncome) {
             currentPeriodNetChange -= t.amount.toNumber(); // Income decreases debt
           } else {
@@ -1881,7 +1884,7 @@ export async function calculateCreditCardInvoice(
     if (!t.categoryName) return sum;
     // Use transaction type if available, otherwise infer from category
     const isIncome = t.type === TransactionType.INCOME || 
-      (t.type !== TransactionType.EXPENSE && getCategoriesByType(CategoryType.INCOME).includes(t.categoryName as any));
+      (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
     if (isIncome) {
       return sum - t.amount.toNumber(); // Income decreases debt
     } else {
@@ -1975,7 +1978,7 @@ export async function calculateCreditCardInvoice(
 /**
  * Pay credit card invoice
  */
-export async function payCreditCardInvoice(input: PayInvoiceInput) {
+export async function payCreditCardInvoice(input: PayInvoiceInput): Promise<{ paymentTransaction: { id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }; creditCardAccount: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; sourceAccount: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; invoiceTotal: number; previousBalance: number; currentExpenses: number; paidAmount: number; }> {
   // householdId must be provided (resolved in routes via ensurePersonalHousehold)
   if (!input.householdId) {
     throw new BadRequestError('householdId is required');
@@ -1992,8 +1995,6 @@ export async function payCreditCardInvoice(input: PayInvoiceInput) {
 
   // Parse month
   const [year, monthNum] = month.split('-').map(Number);
-  const monthStart = new Date(year, monthNum - 1, 1);
-  const monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999);
   const monthKey = `${year}-${monthNum - 1}`;
   const technicalIdentifier = `invoice_pay:${accountId}:${monthKey}`;
 
@@ -2057,7 +2058,7 @@ export async function payCreditCardInvoice(input: PayInvoiceInput) {
       if (!t.categoryName) return sum;
       // Use transaction type if available, otherwise infer from category
       const isIncome = t.type === TransactionType.INCOME || 
-        (t.type !== TransactionType.EXPENSE && getCategoriesByType(CategoryType.INCOME).includes(t.categoryName as any));
+        (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
       if (isIncome) {
         return sum - t.amount.toNumber(); // Income decreases debt
       } else {
@@ -2111,7 +2112,7 @@ export async function payCreditCardInvoice(input: PayInvoiceInput) {
         } else if (t.accountId === accountId && t.categoryName) {
           // Use transaction type if available, otherwise infer from category
           const isIncome = t.type === TransactionType.INCOME || 
-            (t.type !== TransactionType.EXPENSE && getCategoriesByType(CategoryType.INCOME).includes(t.categoryName as any));
+            (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
           if (isIncome) {
             currentPeriodNetChange -= t.amount.toNumber(); // Income decreases debt
           } else {
@@ -2140,7 +2141,7 @@ export async function payCreditCardInvoice(input: PayInvoiceInput) {
       if (!t.categoryName) return sum;
       // Use transaction type if available, otherwise infer from category
       const isIncome = t.type === TransactionType.INCOME || 
-        (t.type !== TransactionType.EXPENSE && getCategoriesByType(CategoryType.INCOME).includes(t.categoryName as any));
+        (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
       if (isIncome) {
         return sum - t.amount.toNumber(); // Income decreases debt
       } else {
@@ -2283,7 +2284,7 @@ export async function payCreditCardInvoice(input: PayInvoiceInput) {
 export async function undoCreditCardPayment(
   input: UndoPaymentParams,
   householdId: string
-) {
+): Promise<{ creditCardAccount: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; sourceAccount: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; undoneTransaction: { id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }; }> {
   return await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     // 1. Find the payment transaction
     const paymentTransaction = await tx.transaction.findFirst({
@@ -2324,21 +2325,16 @@ export async function undoCreditCardPayment(
 
     const monthKey = monthMatch[1];
     const [year, monthIndex] = monthKey.split('-').map(Number);
-    // monthIndex is 0-indexed (0-11), convert to 1-indexed for Date constructor
-    const monthNum = monthIndex + 1;
     
     // Se closingDay estiver definido, usar período de fechamento; senão, usar mês completo
     let monthStart: Date;
-    let monthEnd: Date;
     
     if (creditCard.closingDay) {
       const closingDay = creditCard.closingDay;
       monthStart = new Date(year, monthIndex - 1, closingDay); // Mês anterior, dia de fechamento
-      monthEnd = new Date(year, monthIndex, closingDay - 1, 23, 59, 59, 999); // Mês atual, dia anterior ao fechamento
     } else {
       // Comportamento padrão: mês completo
       monthStart = new Date(year, monthIndex, 1);
-      monthEnd = new Date(year, monthNum, 0, 23, 59, 59, 999);
     }
 
     // 4. Return amount to credit card balance (increase debt)
@@ -2419,7 +2415,7 @@ export async function createTransfer(input: {
   description?: string;
   date: Date;
   notes?: string;
-}) {
+}): Promise<{ amount: number; fromAccount: { id: string; name: string; type: Prisma_AccountType; } | null; toAccount: { id: string; name: string; type: Prisma_AccountType; } | null; id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }> {
   const { householdId, fromAccountId, toAccountId, amount, description, date, notes } = input;
 
   if (fromAccountId === toAccountId) {
@@ -2508,7 +2504,7 @@ export async function createAllocation(input: {
   description?: string;
   date: Date;
   notes?: string;
-}) {
+}): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; } | null; relatedAccount: { id: string; name: string; type: Prisma_AccountType; } | null; id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }> {
   const { householdId, accountId, creditCardId, amount, description, date, notes } = input;
 
   if (accountId === creditCardId) {
@@ -2594,7 +2590,7 @@ export async function createDeallocation(input: {
   description?: string;
   date: Date;
   notes?: string;
-}) {
+}): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; } | null; relatedAccount: { id: string; name: string; type: Prisma_AccountType; } | null; id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }> {
   const { householdId, accountId, creditCardId, amount, description, date, notes } = input;
 
   // Verify accounts belong to household

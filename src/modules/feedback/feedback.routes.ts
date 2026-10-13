@@ -3,7 +3,7 @@ import { authMiddleware } from '../../shared/middleware/auth.middleware.js';
 import { createFeedbackSchema } from './feedback.schema.js';
 import * as feedbackService from './feedback.service.js';
 
-export async function feedbackRoutes(app: FastifyInstance) {
+export async function feedbackRoutes(app: FastifyInstance): Promise<void> {
   // All routes require authentication
   app.addHook('preHandler', authMiddleware());
 

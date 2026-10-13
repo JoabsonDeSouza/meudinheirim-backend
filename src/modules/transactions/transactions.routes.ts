@@ -16,6 +16,7 @@ import {
   batchDeleteTransactionsSchema,
   payInvoiceSchema,
   creditCardInvoiceParamsSchema,
+  creditCardInvoiceQuerySchema,
   undoPaymentParamsSchema,
   createTransferSchema,
   createAllocationSchema,
@@ -27,7 +28,7 @@ import { updateTransactionSplitSchema } from './transaction-splits.schema.js';
 import * as transactionsService from './transactions.service.js';
 import * as transactionSplitsService from './transaction-splits.service.js';
 
-export async function transactionRoutes(app: FastifyInstance) {
+export async function transactionRoutes(app: FastifyInstance): Promise<void> {
   // All routes require authentication
   app.addHook('preHandler', authMiddleware());
 
@@ -594,7 +595,7 @@ export async function transactionRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const params = creditCardInvoiceParamsSchema.parse(request.params);
-      const query = request.query as any;
+      const query = creditCardInvoiceQuerySchema.parse(request.query ?? {});
       
       // If no householdId provided, ensure user has a personal household
       const householdId = query.householdId || await ensurePersonalHousehold(request);
@@ -662,7 +663,9 @@ export async function transactionRoutes(app: FastifyInstance) {
     async (request, reply) => {
       const { accountId } = request.params;
       const body = payInvoiceSchema.parse({
-        ...(request.body as any),
+        ...payInvoiceSchema
+          .omit({ accountId: true })
+          .parse(typeof request.body === 'object' && request.body !== null ? request.body : {}),
         accountId, // Add accountId from params
       });
       

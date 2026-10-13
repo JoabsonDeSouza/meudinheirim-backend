@@ -1,5 +1,4 @@
 import { prisma } from '../../shared/db/prisma.js';
-import { NotFoundError, BadRequestError } from '../../shared/errors/index.js';
 
 /**
  * Process referral code when a new user signs up

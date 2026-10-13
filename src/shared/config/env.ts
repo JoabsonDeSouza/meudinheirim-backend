@@ -35,7 +35,7 @@ const envSchema = z.object({
   ALLOWED_ORIGINS: z.string().optional(),
 });
 
-function validateEnv() {
+function validateEnv(): { DATABASE_URL: string; PORT: number; NODE_ENV: "development" | "production" | "test"; RATE_LIMIT_MAX: number; RATE_LIMIT_WINDOW_MS: number; GOOGLE_APPLICATION_CREDENTIALS?: string | undefined; FIREBASE_PROJECT_ID?: string | undefined; FIREBASE_CLIENT_EMAIL?: string | undefined; FIREBASE_PRIVATE_KEY?: string | undefined; REDIS_URL?: string | undefined; SWAGGER_USERNAME?: string | undefined; SWAGGER_PASSWORD?: string | undefined; FIRST_RUN?: boolean | undefined; ALLOWED_ORIGINS?: string | undefined; } {
   const parsed = envSchema.safeParse(process.env);
 
   if (!parsed.success) {

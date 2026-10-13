@@ -37,7 +37,7 @@ function hasRoleLevel(userRole: HouseholdRole, requiredRole: HouseholdRole): boo
  * Creates user if doesn't exist (for first login)
  * Handles case where user exists with same email but different firebaseUid
  */
-export async function getUserByFirebaseUid(firebaseUid: string, email: string) {
+export async function getUserByFirebaseUid(firebaseUid: string, email: string): Promise<{ id: string; createdAt: Date; updatedAt: Date; email: string; firebaseUid: string; displayName: string | null; isPremium: boolean; onboardingCompleted: boolean; onboardingRestartedAt: Date | null; theme: string | null; baseCurrency: string | null; locale: string | null; country: string | null; referralCode: string | null; dashboardPreferences: Prisma.JsonValue | null; lastRecurringProcessedMonth: string | null; lastRecurringProcessedAt: Date | null; preferencesUpdatedAt: Date | null; }> {
   // Validate email - must be a non-empty string
   if (!email || email.trim() === '') {
     throw new Error('Email is required to create user');
@@ -183,7 +183,7 @@ export async function requireEditor(
 /**
  * Get user's accessible households
  */
-export async function getUserHouseholds(userId: string) {
+export async function getUserHouseholds(userId: string): Promise<{ id: string; name: string; createdAt: Date; updatedAt: Date; role: HouseholdRole; joinedAt: Date; }[]> {
   const memberships = await prisma.householdMember.findMany({
     where: { userId },
     include: {

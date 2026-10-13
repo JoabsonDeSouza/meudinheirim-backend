@@ -7,9 +7,8 @@
  */
 
 import 'dotenv/config';
-import { Prisma } from '../generated/prisma/client.js';
 import { prisma } from '../shared/db/prisma.js';
-import { CategoryName, TransactionType, CategoryType } from '../shared/enums/index.js';
+import { CategoryName, TransactionType } from '../shared/enums/index.js';
 import { createTransaction } from '../modules/transactions/transactions.service.js';
 import type { CreateTransactionInput } from '../modules/transactions/transactions.schema.js';
 
@@ -81,11 +80,11 @@ function randomElement<T>(array: T[]): T {
 }
 
 function randomAmount(min: number, max: number): number {
-  return Math.round((Math.random() * (max - min) + min) * 100) / 100;
+  return Math.round(((Math.random() * (max - min)) + min) * 100) / 100;
 }
 
 function randomDate(start: Date, end: Date): Date {
-  return new Date(start.getTime() + Math.random() * (end.getTime() - start.getTime()));
+  return new Date(start.getTime() + (Math.random() * (end.getTime() - start.getTime())));
 }
 
 function normalizeDate(date: Date): Date {
@@ -93,7 +92,7 @@ function normalizeDate(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0);
 }
 
-async function main() {
+async function main(): Promise<void> {
   console.log(`🔍 Procurando usuário com email: ${USER_EMAIL}`);
 
   // Encontrar usuário pelo email

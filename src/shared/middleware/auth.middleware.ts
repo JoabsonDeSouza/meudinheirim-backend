@@ -45,12 +45,12 @@ function extractBearerToken(request: FastifyRequest): string | null {
  * Options:
  * - requireEmailVerified: Require email to be verified (default: true)
  */
-export function authMiddleware(options: { requireEmailVerified?: boolean } = {}) {
+export function authMiddleware(options: { requireEmailVerified?: boolean } = {}): (request: FastifyRequest, reply: FastifyReply) => Promise<void> {
   const { requireEmailVerified = true } = options;
 
   return async function authenticate(
     request: FastifyRequest,
-    reply: FastifyReply
+    _reply: FastifyReply
   ): Promise<void> {
     // Extract token from header
     const token = extractBearerToken(request);

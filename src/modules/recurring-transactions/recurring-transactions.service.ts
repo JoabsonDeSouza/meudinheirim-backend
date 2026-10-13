@@ -1,7 +1,11 @@
+import type { AccountType as Prisma_AccountType } from '../../generated/prisma/enums.js';
+import type { RecurrenceFrequency as Prisma_RecurrenceFrequency } from '../../generated/prisma/enums.js';
+import type { TransactionType as Prisma_TransactionType } from '../../generated/prisma/enums.js';
+
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
 import { NotFoundError, BadRequestError } from '../../shared/errors/index.js';
-import { getCategoryColor, getCategoriesByType, CategoryType, AccountType, TransactionType } from '../../shared/enums/index.js';
+import { isCategoryOfType, CategoryType, AccountType, TransactionType } from '../../shared/enums/index.js';
 import { isCustomCategoryName, toCustomCategoryId } from '../../shared/utils/categoryHelpers.js';
 import { updateBalanceForNormalTransaction, recalculateCreditCardLimit } from '../../shared/services/balance.service.js';
 import type {
@@ -56,7 +60,7 @@ function calculateNextRunDate(
  */
 export async function createRecurringTransaction(
   input: CreateRecurringTransactionInput
-) {
+): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; }; id: string; isActive: boolean; createdAt: Date; updatedAt: Date; householdId: string; description: string | null; categoryName: string; accountId: string; startDate: Date; endDate: Date | null; frequency: Prisma_RecurrenceFrequency; nextRunAt: Date; lastRunDate: Date | null; }> {
   // householdId must be provided (resolved in routes via ensurePersonalHousehold)
   if (!input.householdId) {
     throw new BadRequestError('householdId is required');
@@ -175,7 +179,7 @@ export async function createRecurringTransaction(
 /**
  * Get recurring transaction by ID
  */
-export async function getRecurringTransaction(recurringId: string) {
+export async function getRecurringTransaction(recurringId: string): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; }; id: string; isActive: boolean; createdAt: Date; updatedAt: Date; householdId: string; description: string | null; categoryName: string; accountId: string; startDate: Date; endDate: Date | null; frequency: Prisma_RecurrenceFrequency; nextRunAt: Date; lastRunDate: Date | null; }> {
   const recurring = await prisma.recurringTransaction.findUnique({
     where: { id: recurringId },
     include: {
@@ -201,7 +205,7 @@ export async function getRecurringTransaction(recurringId: string) {
  */
 export async function listRecurringTransactions(
   query: ListRecurringTransactionsQuery
-) {
+): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; }; id: string; isActive: boolean; createdAt: Date; updatedAt: Date; householdId: string; description: string | null; categoryName: string; accountId: string; startDate: Date; endDate: Date | null; frequency: Prisma_RecurrenceFrequency; nextRunAt: Date; lastRunDate: Date | null; }[]> {
   const { householdId, isActive } = query;
 
   const recurring = await prisma.recurringTransaction.findMany({
@@ -237,7 +241,7 @@ export async function updateRecurringTransaction(
   recurringId: string,
   householdId: string,
   input: UpdateRecurringTransactionInput
-) {
+): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; }; id: string; isActive: boolean; createdAt: Date; updatedAt: Date; householdId: string; description: string | null; categoryName: string; accountId: string; startDate: Date; endDate: Date | null; frequency: Prisma_RecurrenceFrequency; nextRunAt: Date; lastRunDate: Date | null; }> {
   const existing = await prisma.recurringTransaction.findFirst({
     where: { id: recurringId, householdId },
   });
@@ -349,7 +353,7 @@ export async function updateRecurringTransaction(
 export async function deleteRecurringTransaction(
   recurringId: string,
   householdId: string
-) {
+): Promise<{ deleted: boolean; }> {
   const recurring = await prisma.recurringTransaction.findFirst({
     where: { id: recurringId, householdId },
   });
@@ -380,7 +384,7 @@ export async function executeRecurringTransaction(
   recurringId: string,
   householdId: string,
   input: ExecuteRecurringTransactionInput = {}
-) {
+): Promise<{ transaction: { account: { id: string; name: string; type: Prisma_AccountType; } | null; } & { id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }; nextRunAt: Date; }> {
   const recurring = await prisma.recurringTransaction.findFirst({
     where: { id: recurringId, householdId, isActive: true },
     include: {
@@ -403,7 +407,7 @@ export async function executeRecurringTransaction(
     });
     isIncome = cat?.type === CategoryType.INCOME;
   } else {
-    isIncome = getCategoriesByType(CategoryType.INCOME).includes(recurring.categoryName as any);
+    isIncome = isCategoryOfType(CategoryType.INCOME, recurring.categoryName);
   }
 
   function calculateBalanceChange(amount: number, isInc: boolean, accountType: string): number {
@@ -478,7 +482,7 @@ export async function executeRecurringTransaction(
 /**
  * Get recurring transactions that are due (nextRunAt <= today)
  */
-export async function getDueRecurringTransactions(householdId: string) {
+export async function getDueRecurringTransactions(householdId: string): Promise<({ account: { id: string; name: string; type: Prisma_AccountType; }; } & { id: string; isActive: boolean; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; description: string | null; categoryName: string; accountId: string; startDate: Date; endDate: Date | null; frequency: Prisma_RecurrenceFrequency; nextRunAt: Date; lastRunDate: Date | null; })[]> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 

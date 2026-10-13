@@ -47,7 +47,7 @@ export function createPaginatedResponse<T extends { id: string }>(
 /**
  * Build Prisma pagination args for cursor-based pagination
  */
-export function buildPaginationArgs(params: PaginationQuery) {
+export function buildPaginationArgs(params: PaginationQuery): { skip?: number | undefined; cursor?: { id: string; } | undefined; take: number; } {
   const { cursor, limit } = params;
 
   return {

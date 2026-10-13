@@ -219,6 +219,17 @@ export const creditCardInvoiceParamsSchema = z.object({
 export type CreditCardInvoiceParams = z.infer<typeof creditCardInvoiceParamsSchema>;
 
 /**
+ * Invoice listing query
+ */
+export const creditCardInvoiceQuerySchema = z.object({
+  householdId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  cursor: z.string().optional(),
+});
+
+export type CreditCardInvoiceQuery = z.infer<typeof creditCardInvoiceQuerySchema>;
+
+/**
  * Undo payment params
  */
 export const undoPaymentParamsSchema = z.object({

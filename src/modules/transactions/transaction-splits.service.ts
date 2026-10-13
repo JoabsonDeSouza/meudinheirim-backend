@@ -1,4 +1,3 @@
-import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
 import { NotFoundError, BadRequestError, ForbiddenError } from '../../shared/errors/index.js';
 import type { UpdateTransactionSplitInput } from './transaction-splits.schema.js';
@@ -11,7 +10,7 @@ export async function updateTransactionSplit(
   splitId: string,
   userId: string,
   input: UpdateTransactionSplitInput
-) {
+): Promise<{ amount: number; user: { id: string; email: string; displayName: string | null; }; transaction: { id: string; householdId: string; }; id: string; createdAt: Date; updatedAt: Date; paid: boolean; userId: string; transactionId: string; paidAt: Date | null; }> {
   const split = await prisma.transactionSplit.findUnique({
     where: { id: splitId },
     include: {
@@ -61,7 +60,7 @@ export async function updateTransactionSplit(
 /**
  * Get transaction splits for a transaction
  */
-export async function getTransactionSplits(transactionId: string, householdId: string) {
+export async function getTransactionSplits(transactionId: string, householdId: string): Promise<{ amount: number; user: { id: string; email: string; displayName: string | null; }; id: string; createdAt: Date; updatedAt: Date; paid: boolean; userId: string; transactionId: string; paidAt: Date | null; }[]> {
   // Verify transaction exists and belongs to household
   const transaction = await prisma.transaction.findFirst({
     where: { id: transactionId, householdId },

@@ -4,7 +4,7 @@ import type { CreateFeedbackInput } from './feedback.schema.js';
 /**
  * Create a new user feedback
  */
-export async function createFeedback(input: CreateFeedbackInput, email: string) {
+export async function createFeedback(input: CreateFeedbackInput, email: string): Promise<{ id: string; createdAt: Date; email: string; score: number; feedbackContent: string | null; }> {
   const feedback = await prisma.userFeedback.create({
     data: {
       email,

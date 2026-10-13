@@ -6,7 +6,7 @@ import type { UpdateUserPreferencesInput } from './users.schema.js';
 /**
  * Get user by Firebase UID
  */
-export async function getUserByFirebaseUid(firebaseUid: string) {
+export async function getUserByFirebaseUid(firebaseUid: string): Promise<{ id: string; createdAt: Date; updatedAt: Date; email: string; firebaseUid: string; displayName: string | null; isPremium: boolean; onboardingCompleted: boolean; onboardingRestartedAt: Date | null; theme: string | null; baseCurrency: string | null; locale: string | null; country: string | null; referralCode: string | null; dashboardPreferences: Prisma.JsonValue; lastRecurringProcessedMonth: string | null; lastRecurringProcessedAt: Date | null; preferencesUpdatedAt: Date | null; }> {
   const user = await prisma.user.findUnique({
     where: { firebaseUid },
     select: {
@@ -41,7 +41,7 @@ export async function getUserByFirebaseUid(firebaseUid: string) {
 /**
  * Get user by database ID
  */
-export async function getUserById(userId: string) {
+export async function getUserById(userId: string): Promise<{ id: string; createdAt: Date; updatedAt: Date; email: string; firebaseUid: string; displayName: string | null; isPremium: boolean; onboardingCompleted: boolean; onboardingRestartedAt: Date | null; theme: string | null; baseCurrency: string | null; locale: string | null; country: string | null; referralCode: string | null; dashboardPreferences: Prisma.JsonValue; lastRecurringProcessedMonth: string | null; lastRecurringProcessedAt: Date | null; preferencesUpdatedAt: Date | null; }> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     select: {
@@ -79,9 +79,9 @@ export async function getUserById(userId: string) {
 export async function updateUserPreferences(
   userId: string,
   input: UpdateUserPreferencesInput
-) {
+): Promise<{ id: string; createdAt: Date; updatedAt: Date; email: string; firebaseUid: string; displayName: string | null; isPremium: boolean; onboardingCompleted: boolean; onboardingRestartedAt: Date | null; theme: string | null; baseCurrency: string | null; locale: string | null; country: string | null; referralCode: string | null; dashboardPreferences: Prisma.JsonValue; lastRecurringProcessedMonth: string | null; lastRecurringProcessedAt: Date | null; preferencesUpdatedAt: Date | null; }> {
   // Prepare update data
-  const updateData: any = {
+  const updateData: Prisma.UserUpdateInput = {
     ...(input.displayName !== undefined && { displayName: input.displayName }),
     ...(input.isPremium !== undefined && { isPremium: input.isPremium }),
     ...(input.onboardingCompleted !== undefined && {
@@ -96,7 +96,7 @@ export async function updateUserPreferences(
     ...(input.country !== undefined && { country: input.country }),
     ...(input.referralCode !== undefined && { referralCode: input.referralCode }),
     ...(input.dashboardPreferences !== undefined && {
-      dashboardPreferences: input.dashboardPreferences as any,
+      dashboardPreferences: input.dashboardPreferences === undefined ? undefined : (input.dashboardPreferences as Prisma.InputJsonValue),
     }),
     ...(input.lastRecurringProcessedMonth !== undefined && {
       lastRecurringProcessedMonth: input.lastRecurringProcessedMonth,

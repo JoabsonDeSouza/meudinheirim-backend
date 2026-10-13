@@ -60,7 +60,7 @@ function calculateNextRunDate(
 /**
  * Process all due recurring transactions
  */
-async function processDueRecurringTransactions() {
+async function processDueRecurringTransactions(): Promise<void> {
   const today = new Date();
   today.setHours(0, 0, 0, 0); // Normalize to start of day
 
@@ -200,7 +200,7 @@ async function processDueRecurringTransactions() {
  * Main entry point for Railway Cron Job
  * This script should be executed directly: node dist/jobs/processRecurrences.js
  */
-async function main() {
+async function main(): Promise<void> {
   try {
     console.log('[CronJob] Connecting to database...');
     // Database connection is handled by prisma client

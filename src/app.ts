@@ -161,7 +161,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
     staticCSP: true,
     transformStaticCSP: (header) => header,
-    transformSpecification: (swaggerObject, request, reply) => {
+    transformSpecification: (swaggerObject, _request, _reply) => {
       return swaggerObject;
     },
     transformSpecificationClone: true,
@@ -391,7 +391,7 @@ export async function startServer(): Promise<void> {
   }
 
   // Graceful shutdown
-  const shutdown = async () => {
+  const shutdown = async (): Promise<void> => {
     console.log('\n📴 Shutting down gracefully...');
 
     if (app) {

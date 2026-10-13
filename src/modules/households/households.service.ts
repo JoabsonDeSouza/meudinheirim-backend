@@ -1,14 +1,15 @@
+import type { InviteStatus as Prisma_InviteStatus } from '../../generated/prisma/enums.js';
+
 import type { HouseholdRole } from '../../generated/prisma/client.js';
-import { Prisma } from '../../generated/prisma/client.js';
+import { type Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
 import { NotFoundError, ConflictError, BadRequestError } from '../../shared/errors/index.js';
 import type { CreateHouseholdInput, UpdateHouseholdInput, InviteMemberInput } from './households.schema.js';
-import { CategoryName, CategoryType, getDefaultCategoriesByType, getCategoryColor } from '../../shared/enums/index.js';
 
 /**
  * Create a new household with the creator as OWNER
  */
-export async function createHousehold(userId: string, input: CreateHouseholdInput) {
+export async function createHousehold(userId: string, input: CreateHouseholdInput): Promise<{ id: string; name: string; createdAt: Date; updatedAt: Date; }> {
   // Check how many households the user is a member of
   const userMemberships = await prisma.householdMember.findMany({
     where: { userId },
@@ -62,7 +63,7 @@ export async function createHousehold(userId: string, input: CreateHouseholdInpu
 /**
  * Get household by ID with member count
  */
-export async function getHousehold(householdId: string) {
+export async function getHousehold(householdId: string): Promise<{ _count: { transactions: number; members: number; accounts: number; }; } & { id: string; name: string; createdAt: Date; updatedAt: Date; }> {
   const household = await prisma.household.findUnique({
     where: { id: householdId },
     include: {
@@ -86,7 +87,7 @@ export async function getHousehold(householdId: string) {
 /**
  * Update household details
  */
-export async function updateHousehold(householdId: string, input: UpdateHouseholdInput) {
+export async function updateHousehold(householdId: string, input: UpdateHouseholdInput): Promise<{ id: string; name: string; createdAt: Date; updatedAt: Date; }> {
   return await prisma.household.update({
     where: { id: householdId },
     data: input,
@@ -109,7 +110,7 @@ export async function updateHousehold(householdId: string, input: UpdateHousehol
  * Notificações que referenciam esta household (metadata.householdId) são
  * removidas explicitamente, pois não há FK.
  */
-export async function deleteHousehold(householdId: string) {
+export async function deleteHousehold(householdId: string): Promise<void> {
   await prisma.$transaction(async (tx) => {
     // Notificações não têm FK para Household; metadata é JSON. Remover para não deixar links quebrados.
     await tx.$executeRaw`
@@ -125,7 +126,7 @@ export async function deleteHousehold(householdId: string) {
 /**
  * Get all members of a household
  */
-export async function getHouseholdMembers(householdId: string) {
+export async function getHouseholdMembers(householdId: string): Promise<({ user: { id: string; createdAt: Date; email: string; displayName: string | null; }; } & { id: string; createdAt: Date; updatedAt: Date; householdId: string; userId: string; role: HouseholdRole; allowPersonalAccountAccess: boolean; sharedAccountIds: Prisma.JsonValue | null; })[]> {
   return await prisma.householdMember.findMany({
     where: { householdId },
     include: {
@@ -145,7 +146,7 @@ export async function getHouseholdMembers(householdId: string) {
 /**
  * Invite a user to household by email (creates pending invite)
  */
-export async function inviteMember(householdId: string, inviterId: string, input: InviteMemberInput) {
+export async function inviteMember(householdId: string, inviterId: string, input: InviteMemberInput): Promise<{ household: { id: string; name: string; createdAt: Date; }; inviter: { id: string; email: string; displayName: string | null; }; } & { id: string; status: Prisma_InviteStatus; createdAt: Date; updatedAt: Date; householdId: string; email: string; role: HouseholdRole; expiresAt: Date; acceptedAt: Date | null; rejectedAt: Date | null; inviterId: string; inviteeId: string | null; }> {
   // Find user by email
   const user = await prisma.user.findUnique({
     where: { email: input.email },
@@ -272,7 +273,7 @@ export async function updateMemberRole(
   householdId: string,
   memberId: string,
   role: HouseholdRole
-) {
+): Promise<{ id: string; createdAt: Date; updatedAt: Date; householdId: string; userId: string; role: HouseholdRole; allowPersonalAccountAccess: boolean; sharedAccountIds: Prisma.JsonValue | null; }> {
   // Get the member
   const member = await prisma.householdMember.findFirst({
     where: {
@@ -309,7 +310,7 @@ export async function updatePersonalAccountAccess(
   householdId: string,
   userId: string,
   allowPersonalAccountAccess: boolean
-) {
+): Promise<{ user: { id: string; createdAt: Date; email: string; displayName: string | null; }; } & { id: string; createdAt: Date; updatedAt: Date; householdId: string; userId: string; role: HouseholdRole; allowPersonalAccountAccess: boolean; sharedAccountIds: Prisma.JsonValue | null; }> {
   // Find the member
   const member = await prisma.householdMember.findUnique({
     where: {
@@ -354,7 +355,7 @@ export async function updateSharedAccountIds(
   householdId: string,
   userId: string,
   sharedAccountIds: string[]
-) {
+): Promise<{ user: { id: string; createdAt: Date; email: string; displayName: string | null; }; } & { id: string; createdAt: Date; updatedAt: Date; householdId: string; userId: string; role: HouseholdRole; allowPersonalAccountAccess: boolean; sharedAccountIds: Prisma.JsonValue | null; }> {
   // Find the member
   const member = await prisma.householdMember.findUnique({
     where: {
@@ -427,7 +428,7 @@ export async function updateSharedAccountIds(
 /**
  * Remove a member from household
  */
-export async function removeMember(householdId: string, memberId: string) {
+export async function removeMember(householdId: string, memberId: string): Promise<void> {
   const member = await prisma.householdMember.findFirst({
     where: {
       id: memberId,
@@ -456,7 +457,7 @@ export async function transferOwnership(
   householdId: string,
   currentOwnerId: string,
   newOwnerId: string
-) {
+): Promise<void> {
   // Verify new owner is a member
   const newOwnerMember = await prisma.householdMember.findFirst({
     where: {
@@ -504,7 +505,7 @@ export async function transferOwnership(
 /**
  * Leave a household (for non-owners)
  */
-export async function leaveHousehold(householdId: string, userId: string) {
+export async function leaveHousehold(householdId: string, userId: string): Promise<void> {
   const member = await prisma.householdMember.findUnique({
     where: {
       householdId_userId: {
@@ -531,7 +532,7 @@ export async function leaveHousehold(householdId: string, userId: string) {
  * Create a personal household for a user
  * Used for lazy creation when user needs a household (e.g., first transaction/account)
  */
-export async function createPersonalHousehold(userId: string, email: string) {
+export async function createPersonalHousehold(userId: string, email: string): Promise<{ id: string; name: string; createdAt: Date; updatedAt: Date; }> {
   // Check if user already has a household
   const existingMembership = await prisma.householdMember.findFirst({
     where: { userId },
@@ -573,7 +574,7 @@ export async function createPersonalHousehold(userId: string, email: string) {
  * IMPORTANT: Always returns the oldest household by household.createdAt (personal household)
  * This ensures consistency - users always get their personal household, not a shared one
  */
-export async function getOrCreatePersonalHousehold(userId: string, email: string) {
+export async function getOrCreatePersonalHousehold(userId: string, email: string): Promise<{ id: string; name: string; createdAt: Date; updatedAt: Date; }> {
   // Find all household memberships and sort by household creation date
   // The oldest household (by createdAt) is the personal one
   const allMemberships = await prisma.householdMember.findMany({
@@ -599,7 +600,7 @@ export async function getOrCreatePersonalHousehold(userId: string, email: string
 /**
  * Get pending invites for a user
  */
-export async function getPendingInvites(userId: string) {
+export async function getPendingInvites(userId: string): Promise<({ household: { id: string; name: string; createdAt: Date; }; inviter: { id: string; email: string; displayName: string | null; }; } & { id: string; status: Prisma_InviteStatus; createdAt: Date; updatedAt: Date; householdId: string; email: string; role: HouseholdRole; expiresAt: Date; acceptedAt: Date | null; rejectedAt: Date | null; inviterId: string; inviteeId: string | null; })[]> {
   return await prisma.householdInvite.findMany({
     where: {
       inviteeId: userId,
@@ -633,7 +634,7 @@ export async function getPendingInvites(userId: string) {
 /**
  * Accept a household invite
  */
-export async function acceptInvite(inviteId: string, userId: string) {
+export async function acceptInvite(inviteId: string, userId: string): Promise<{ id: string; createdAt: Date; updatedAt: Date; householdId: string; userId: string; role: HouseholdRole; allowPersonalAccountAccess: boolean; sharedAccountIds: Prisma.JsonValue | null; }> {
   const invite = await prisma.householdInvite.findUnique({
     where: { id: inviteId },
   });
@@ -763,7 +764,7 @@ export async function acceptInvite(inviteId: string, userId: string) {
 /**
  * Reject a household invite
  */
-export async function rejectInvite(inviteId: string, userId: string) {
+export async function rejectInvite(inviteId: string, userId: string): Promise<{ id: string; status: Prisma_InviteStatus; createdAt: Date; updatedAt: Date; householdId: string; email: string; role: HouseholdRole; expiresAt: Date; acceptedAt: Date | null; rejectedAt: Date | null; inviterId: string; inviteeId: string | null; }> {
   const invite = await prisma.householdInvite.findUnique({
     where: { id: inviteId },
   });
@@ -818,7 +819,7 @@ export async function rejectInvite(inviteId: string, userId: string) {
 /**
  * Cancel an invite (by inviter)
  */
-export async function cancelInvite(inviteId: string, inviterId: string) {
+export async function cancelInvite(inviteId: string, inviterId: string): Promise<{ id: string; status: Prisma_InviteStatus; createdAt: Date; updatedAt: Date; householdId: string; email: string; role: HouseholdRole; expiresAt: Date; acceptedAt: Date | null; rejectedAt: Date | null; inviterId: string; inviteeId: string | null; }> {
   const invite = await prisma.householdInvite.findUnique({
     where: { id: inviteId },
   });
@@ -877,7 +878,7 @@ export async function cancelInvite(inviteId: string, inviterId: string) {
 /**
  * Get invites sent by a user for a household
  */
-export async function getHouseholdInvites(householdId: string) {
+export async function getHouseholdInvites(householdId: string): Promise<({ inviter: { id: string; email: string; displayName: string | null; }; invitee: { id: string; email: string; displayName: string | null; } | null; } & { id: string; status: Prisma_InviteStatus; createdAt: Date; updatedAt: Date; householdId: string; email: string; role: HouseholdRole; expiresAt: Date; acceptedAt: Date | null; rejectedAt: Date | null; inviterId: string; inviteeId: string | null; })[]> {
   return await prisma.householdInvite.findMany({
     where: { householdId },
     include: {

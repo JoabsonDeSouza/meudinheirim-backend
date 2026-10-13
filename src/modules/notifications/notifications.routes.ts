@@ -8,7 +8,7 @@ import {
 } from './notifications.schema.js';
 import * as notificationsService from './notifications.service.js';
 
-export async function notificationRoutes(app: FastifyInstance) {
+export async function notificationRoutes(app: FastifyInstance): Promise<void> {
   // All routes require authentication
   app.addHook('preHandler', authMiddleware());
 
