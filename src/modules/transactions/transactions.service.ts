@@ -888,7 +888,7 @@ export async function updateTransaction(
         let iterationsProcessed = 0;
         
         // Start from the next occurrence after the current transaction date
-        let currentDate = new Date(transactionDate);
+        const currentDate = new Date(transactionDate);
         
         // Calculate next date based on frequency
         switch (recurring.frequency) {

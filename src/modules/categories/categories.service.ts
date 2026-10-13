@@ -108,7 +108,7 @@ export async function updateCategory(
   return await prisma.category.update({
     where: { id: categoryId },
     data: {
-      ...(input.name != null && { name: input.name }),
+      ...(input.name !== undefined && input.name !== null && { name: input.name }),
       ...(input.icon !== undefined && { icon: input.icon }),
       ...(input.color !== undefined && { color: input.color }),
     },

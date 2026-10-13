@@ -168,7 +168,7 @@ export async function listAccounts(query: ListAccountsQuery, userId?: string) {
   });
 
   // If userId is provided and this is a shared household, include shared personal accounts
-  let sharedAccounts: Array<typeof householdAccounts[0] & { accountOwnerId: string; isPersonal: boolean }> = [];
+  const sharedAccounts: Array<typeof householdAccounts[0] & { accountOwnerId: string; isPersonal: boolean }> = [];
   if (userId) {
     // Get user's personal household (oldest household)
     const userMemberships = await prisma.householdMember.findMany({
@@ -349,7 +349,7 @@ export async function listAvailableAccounts(householdId: string, userId: string,
 
   // If this is a shared household, include shared personal accounts (from all members including current user)
   // Only include accounts that are explicitly shared via sharedAccountIds
-  let sharedPersonalAccounts: Array<typeof householdAccounts[0] & { accountOwnerId: string }> = [];
+  const sharedPersonalAccounts: Array<typeof householdAccounts[0] & { accountOwnerId: string }> = [];
   if (isSharedHousehold && personalHousehold) {
     // Get all household members (including current user) to check their shared accounts
     const allHouseholdMembers = await prisma.householdMember.findMany({
