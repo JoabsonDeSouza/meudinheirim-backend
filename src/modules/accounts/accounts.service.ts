@@ -72,6 +72,10 @@ export async function createAccount(input: CreateAccountInput): Promise<{ balanc
       availableBalance: availableBalance, // Saldo disponível
       allocatedBalance: allocatedBalance, // Saldo alocado (sempre 0 na criação)
       currency: input.currency,
+      ...(input.institution !== undefined && { institution: input.institution }),
+      ...(input.brand !== undefined && { brand: input.brand }),
+      ...(input.cardNetwork !== undefined && { cardNetwork: input.cardNetwork }),
+      ...(input.last4 !== undefined && { last4: input.last4 }),
       ...(accountColor && { color: accountColor }),
       ...(input.icon && { icon: input.icon }),
       ...(input.creditLimit && { creditLimit: new Prisma.Decimal(input.creditLimit) }),
@@ -498,6 +502,11 @@ export async function updateAccount(accountId: string, householdId: string, inpu
   const updateData: Prisma.AccountUpdateInput = {
     ...(input.name !== undefined && { name: input.name }),
     ...(input.type !== undefined && { type: input.type }),
+    ...(input.currency !== undefined && { currency: input.currency }),
+    ...(input.institution !== undefined && { institution: input.institution }),
+    ...(input.brand !== undefined && { brand: input.brand }),
+    ...(input.cardNetwork !== undefined && { cardNetwork: input.cardNetwork }),
+    ...(input.last4 !== undefined && { last4: input.last4 }),
     ...(input.balance !== undefined && { balance: new Prisma.Decimal(input.balance) }), // Permitir atualização direta (usado para pagamento de fatura)
     ...(input.isActive !== undefined && { isActive: input.isActive }),
     ...(accountColor !== undefined && { color: accountColor }),
@@ -828,7 +837,6 @@ export async function getAccountsSummary(householdId: string): Promise<{ totalAc
 
   return summary;
 }
-
 
 
 

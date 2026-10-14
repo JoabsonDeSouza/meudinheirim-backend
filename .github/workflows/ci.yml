@@ -51,5 +51,9 @@ jobs:
         run: npm run test:contract
       - name: Security tests
         run: npm run test:security
+      - name: Apply migrations to isolated test database
+        run: npm run db:deploy:test
+      - name: Migration tests
+        run: npm run test:migrations
       - name: Build
         run: npm run build

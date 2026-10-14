@@ -25,7 +25,8 @@
     "test:contract": "vitest run tests/contract --passWithNoTests",
     "test:security": "vitest run tests/security --passWithNoTests",
     "test:migrations": "vitest run tests/migrations --passWithNoTests",
-    "gate:forbidden-typing": "tsx scripts/gates/forbidden-typing.ts"
+    "gate:forbidden-typing": "tsx scripts/gates/forbidden-typing.ts",
+    "db:deploy:test": "tsx scripts/db/deploy-test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^9.0.1",

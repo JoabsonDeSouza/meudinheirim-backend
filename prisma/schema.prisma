@@ -151,6 +151,10 @@ model Account {
   type             AccountType
   balance          Decimal       @default(0) @db.Decimal(15, 2) // Mantido para compatibilidade (será total_balance)
   currency         String        @default("BRL") @db.VarChar(3)
+  institution      String?       @db.VarChar(100)
+  brand            String?       @db.VarChar(50)
+  cardNetwork      String?       @map("card_network") @db.VarChar(20)
+  last4            String?       @db.VarChar(4)
   isActive         Boolean       @default(true) @map("is_active")
   status           AccountStatus @default(ACTIVE)
   color            String?       @db.VarChar(7) // Hex color

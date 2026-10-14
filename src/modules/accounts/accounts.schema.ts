@@ -5,6 +5,8 @@ import { AccountType } from '../../shared/enums/index.js';
  * Account types enum
  */
 export const accountTypeEnum = z.nativeEnum(AccountType);
+export const currencySchema = z.enum(['BRL', 'USD']);
+export const cardNetworkSchema = z.enum(['VISA', 'MASTERCARD', 'AMEX', 'ELO', 'DISCOVER', 'OTHER']);
 
 /**
  * Create account request
@@ -14,7 +16,11 @@ export const createAccountSchema = z.object({
   name: z.string().min(1).max(100).trim(),
   type: accountTypeEnum,
   balance: z.coerce.number().default(0),
-  currency: z.string().length(3).default('BRL'),
+  currency: currencySchema.default('BRL'),
+  institution: z.string().trim().min(1).max(100).optional(),
+  brand: z.string().trim().min(1).max(50).optional(),
+  cardNetwork: cardNetworkSchema.optional(),
+  last4: z.string().regex(/^\d{4}$/).optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   icon: z.string().max(50).optional(),
   creditLimit: z.coerce.number().positive().optional(),
@@ -34,6 +40,11 @@ export type CreateAccountInput = z.infer<typeof createAccountSchema>;
 export const updateAccountSchema = z.object({
   name: z.string().min(1).max(100).trim().optional(),
   type: accountTypeEnum.optional(),
+  currency: currencySchema.optional(),
+  institution: z.string().trim().min(1).max(100).nullable().optional(),
+  brand: z.string().trim().min(1).max(50).nullable().optional(),
+  cardNetwork: cardNetworkSchema.nullable().optional(),
+  last4: z.string().regex(/^\d{4}$/).nullable().optional(),
   balance: z.coerce.number().optional(), // Permitir atualização direta do balance (usado para pagamento de fatura de cartão)
   isActive: z.boolean().optional(),
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).nullable().optional(),
@@ -87,7 +98,6 @@ export const adjustBalanceSchema = z.object({
 }).strict();
 
 export type AdjustBalanceInput = z.infer<typeof adjustBalanceSchema>;
-
 
 
 
