@@ -186,6 +186,32 @@ describe('authorization matrix (accounts/financial surfaces)', () => {
     expect(create.statusCode).toBe(403);
   });
 
+  it('viewer cannot initiate a V1 transfer', async () => {
+    const accountList = await app.inject({
+      method: 'GET',
+      url: `/accounts?householdId=${ownerHouseholdId}`,
+      headers: authHeaders('sec-viewer'),
+    });
+    const accounts = (accountList.json() as { data: { accounts: Array<{ id: string }> } }).data.accounts;
+    expect(accounts.length).toBeGreaterThanOrEqual(2);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/transactions/transfers',
+      headers: authHeaders('sec-viewer'),
+      payload: {
+        householdId: ownerHouseholdId,
+        fromAccountId: accounts[0].id,
+        toAccountId: accounts[1].id,
+        amount: { minorUnits: 100, currency: 'BRL' },
+        expectedFromVersion: 1,
+        expectedToVersion: 1,
+        occurredAt: '2026-10-13T12:34:56.000Z',
+        timeZone: 'America/Sao_Paulo',
+      },
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
   it('preferences endpoint rejects isPremium mass assignment', async () => {
     const response = await app.inject({
       method: 'PUT',

@@ -155,6 +155,7 @@ model Account {
   brand            String?       @db.VarChar(50)
   cardNetwork      String?       @map("card_network") @db.VarChar(20)
   last4            String?       @db.VarChar(4)
+  version          Int           @default(1)
   isActive         Boolean       @default(true) @map("is_active")
   status           AccountStatus @default(ACTIVE)
   color            String?       @db.VarChar(7) // Hex color

@@ -38,6 +38,12 @@ describe('account display identity migration', () => {
     );
     expect(idColumn.rows[0].data_type).toBe('uuid');
 
+    const versionColumn = await pool.query<{ data_type: string; column_default: string }>(
+      `SELECT data_type, column_default FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'accounts' AND column_name = 'version'`,
+    );
+    expect(versionColumn.rows[0]).toMatchObject({ data_type: 'integer', column_default: '1' });
+
     const constraints = await pool.query<{ conname: string }>(
       `SELECT conname FROM pg_constraint
        WHERE conrelid = 'accounts'::regclass

@@ -38,6 +38,7 @@ describe('versioned OpenAPI contract', () => {
     expect(document.paths['/v1/accounts/']?.post).toBeDefined();
     expect(document.paths['/v1/transactions/']?.get).toBeDefined();
     expect(document.paths['/v1/transactions/']?.post).toBeDefined();
+    expect(document.paths['/v1/transactions/transfers']?.post).toBeDefined();
   });
 
   it('documents public auth configuration and health/readiness routes', () => {

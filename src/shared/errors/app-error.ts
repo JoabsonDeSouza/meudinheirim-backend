@@ -116,6 +116,12 @@ export class ConflictError extends AppError {
   }
 }
 
+export class VersionConflictError extends AppError {
+  constructor() {
+    super('Entity version is stale', 409, 'VERSION_CONFLICT');
+  }
+}
+
 // ============================================================================
 // RATE LIMIT ERRORS (429)
 // ============================================================================
@@ -125,7 +131,6 @@ export class RateLimitError extends AppError {
     super(message, 429, 'RATE_LIMIT_EXCEEDED');
   }
 }
-
 
 
 

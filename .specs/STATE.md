@@ -30,11 +30,12 @@ All tasks run on the backend worktree/branch above unless a later entry names th
 | T10 · 2026-10-13 | `src/modules/categories/categories.schema.ts`, `categories.v1.routes.ts`, app route registration, category contract docs, unit/integration/contract tests | `test:unit` 46; `test:integration` 15; `test:contract` 4; `test:security` 9 | lint/typecheck/forbidden typing/build/diff-check pass | `eebd9c8` | No migration added because DB already stores enum codes/UUID custom identity; rationale and evidence in `docs/audit/category-contract.md` |
 | T11 · 2026-10-13 | `prisma/schema.prisma`, additive account identity migration, account schemas/services, disposable `db:deploy:test`, CI migration gate, account identity tests | `test:unit` 50; `test:integration` 17; `test:contract` 4; `test:security` 9; `test:migrations` 1; `db:deploy:test` applied to disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `f82022f` | No existing rows were rewritten; currency check is additive and `NOT VALID` |
 | T12 · 2026-10-13 | Transaction V1 schema/service/routes, additive occurredAt/timeZone/deletedAt migration, cursor/OpenAPI tests | `test:unit` 53; `test:integration` 22; `test:contract` 4; `test:security` 10; `test:migrations` 2; `db:deploy:test` applied on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `ef9bc7d` | Legacy unversioned routes remain for compatibility; V1 path uses separate service/routes |
+| T13 · 2026-10-13 | Account version column/migration, atomic V1 transfer application service/route, advisory locks, optimistic checks, transfer tests | `test:unit` 55; `test:integration` 27; `test:contract` 4; `test:security` 11; `test:migrations` 2; `db:deploy:test` no pending migration on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | Pending local commit `fix(ledger): make transfers and balances atomic` | Legacy unversioned transfer remains for compatibility; V1 transfer is exact-minor-unit and versioned |
 
 ## Handoff
 
-- Current task: T12 complete; ledger records commit `ef9bc7d`.
-- Last committed backend SHA: `ef9bc7d`.
-- Current uncommitted changes: this post-commit evidence update.
-- Next action: begin T13 (atomic transfers/balances) in plan order.
+- Current task: T13 gates passed; commit pending.
+- Last committed backend SHA: `ece4148`.
+- Current uncommitted changes: T13 implementation/tests and STATE update.
+- Next action: commit `fix(ledger): make transfers and balances atomic`; then proceed T14.
 - No push, PR, deploy, remote database access, or production configuration changes have occurred.

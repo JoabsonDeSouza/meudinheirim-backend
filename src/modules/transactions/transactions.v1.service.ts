@@ -116,6 +116,7 @@ async function applyBalanceChange(
       balance: { increment: change },
       totalBalance: { increment: change },
       availableBalance: { increment: change },
+      version: { increment: 1 },
     },
   });
 }

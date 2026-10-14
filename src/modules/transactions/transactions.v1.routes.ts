@@ -3,6 +3,8 @@ import { authMiddleware } from '../../shared/middleware/auth.middleware.js';
 import { ensurePersonalHousehold, requireEditor, requireHouseholdMember } from '../../shared/middleware/authorization.middleware.js';
 import { createTransactionV1Schema, listTransactionsV1QuerySchema, transactionV1HouseholdQuerySchema, transactionV1ParamsSchema, updateTransactionV1Schema } from './transactions.v1.schema.js';
 import { createTransactionV1, listTransactionsV1, softDeleteTransactionV1, updateTransactionV1 } from './transactions.v1.service.js';
+import { createTransferV1 } from './transfers.v1.service.js';
+import { createTransferV1Schema } from './transfers.v1.schema.js';
 
 export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware());
@@ -91,6 +93,44 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
     await requireEditor(request, householdId);
     const transaction = await createTransactionV1(input, householdId);
     return reply.code(201).send(transaction);
+  });
+
+  app.post('/transfers', {
+    schema: {
+      description: 'Create an atomic double-entry transfer with account version checks',
+      tags: ['Transactions'],
+      security: [{ bearerAuth: [] }],
+      body: {
+        type: 'object',
+        required: ['fromAccountId', 'toAccountId', 'amount', 'expectedFromVersion', 'expectedToVersion', 'occurredAt', 'timeZone'],
+        properties: {
+          householdId: { type: 'string', format: 'uuid' },
+          fromAccountId: { type: 'string', format: 'uuid' },
+          toAccountId: { type: 'string', format: 'uuid' },
+          amount: {
+            type: 'object', required: ['minorUnits', 'currency'],
+            properties: {
+              minorUnits: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+              currency: { type: 'string', enum: ['BRL', 'USD'] },
+            },
+            additionalProperties: false,
+          },
+          expectedFromVersion: { type: 'integer', minimum: 1 },
+          expectedToVersion: { type: 'integer', minimum: 1 },
+          occurredAt: { type: 'string', format: 'date-time' },
+          timeZone: { type: 'string', maxLength: 64 },
+          note: { type: 'string', maxLength: 1000 },
+        },
+        additionalProperties: false,
+      },
+      response: { 201: { type: 'object', additionalProperties: true } },
+    },
+  }, async (request, reply) => {
+    const input = createTransferV1Schema.parse(request.body);
+    const householdId = input.householdId ?? await ensurePersonalHousehold(request);
+    await requireEditor(request, householdId);
+    const result = await createTransferV1(input, householdId);
+    return reply.code(201).send(result);
   });
 
   app.patch<{ Params: { transactionId: string } }>('/:transactionId', {
