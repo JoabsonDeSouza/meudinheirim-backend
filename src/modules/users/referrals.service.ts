@@ -65,7 +65,7 @@ export async function processReferralCode(
     console.log(`[Referral] Successfully created referral record: ${referral.id} (${referrer.id} -> ${newUserId})`);
     return referrer.id;
   } catch (error) {
-    console.error(`[Referral] Error creating referral record:`, error);
+    console.error('[Referral] Referral record creation failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     throw error;
   }
 }

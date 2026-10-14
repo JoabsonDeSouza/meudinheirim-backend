@@ -43,7 +43,7 @@ export async function resolveMigration(
     
     console.log(`✅ Migration "${migrationName}" resolved successfully as ${action}`);
   } catch (error) {
-    console.error(`❌ Failed to resolve migration "${migrationName}":`, error);
+    console.error('Failed to resolve migration', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     throw error;
   }
 }
@@ -116,7 +116,7 @@ export async function autoResolveFailedMigrations(): Promise<void> {
       }
     }
   } catch (error) {
-    console.error('❌ Failed to auto-resolve migrations:', error);
+    console.error('Failed to auto-resolve migrations', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     throw error;
   }
 }

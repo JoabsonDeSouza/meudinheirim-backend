@@ -182,7 +182,7 @@ async function main(): Promise<void> {
         console.log(`  Progresso: ${created + errors}/${NUM_TRANSACTIONS}`);
       }
     } catch (error) {
-      console.error(`  ❌ Erro ao criar transação ${i + 1}:`, error);
+      console.error(`  ❌ Erro ao criar transação ${i + 1}`, { errorName: error instanceof Error ? error.name : 'UnknownError' });
       errors++;
     }
   }
@@ -214,7 +214,7 @@ async function main(): Promise<void> {
         console.log(`  Progresso: ${created + errors}/${NUM_TRANSACTIONS}`);
       }
     } catch (error) {
-      console.error(`  ❌ Erro ao criar transação ${numIncomes + i + 1}:`, error);
+      console.error(`  ❌ Erro ao criar transação ${numIncomes + i + 1}`, { errorName: error instanceof Error ? error.name : 'UnknownError' });
       errors++;
     }
   }

@@ -22,6 +22,11 @@ export async function disposeBootstrapTestDb(): Promise<void> {
   if (currentDb !== null) {
     const nextDb = currentDb;
     currentDb = null;
-    await nextDb.dispose();
+    try {
+      const { disconnectDatabase } = await import('../../src/shared/db/prisma.js');
+      await disconnectDatabase();
+    } finally {
+      await nextDb.dispose();
+    }
   }
 }

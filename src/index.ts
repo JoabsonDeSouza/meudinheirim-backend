@@ -13,27 +13,22 @@ if (isCronService) {
   import('./jobs/processRecurrences.js').then(({ runCronJob }) => {
     runCronJob();
   }).catch((error) => {
-    console.error('❌ Fatal error running cron job:', error);
-    if (error instanceof Error) {
-      console.error('Error message:', error.message);
-      console.error('Stack trace:', error.stack);
-    }
+    console.error('Fatal cron startup error', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
     process.exit(1);
   });
 } else {
   // Iniciar servidor HTTP normalmente
   import('./app.js').then(({ startServer }) => {
     startServer().catch((error) => {
-      console.error('❌ Fatal error starting server:', error);
-      if (error instanceof Error) {
-        console.error('Error message:', error.message);
-        console.error('Stack trace:', error.stack);
-      }
+      console.error('Fatal server startup error', {
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+      });
       process.exit(1);
     });
   });
 }
-
 
 
 

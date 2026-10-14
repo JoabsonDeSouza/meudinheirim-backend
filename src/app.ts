@@ -7,9 +7,13 @@ import swaggerUi from '@fastify/swagger-ui';
 
 import { env, isProduction } from './shared/config/env.js';
 import { initializeFirebase } from './shared/config/firebase.js';
-import { connectDatabase, disconnectDatabase } from './shared/db/prisma.js';
+import { connectDatabase, disconnectDatabase, prisma } from './shared/db/prisma.js';
 import { runMigrations } from './shared/db/migrations.js';
 import { errorHandler } from './shared/errors/error-handler.js';
+import { isOriginAllowed, parseAllowedOrigins } from './shared/http/origin-policy.js';
+import { shouldEnableSwaggerUi } from './shared/http/swagger-policy.js';
+import { buildReadinessResult } from './shared/ops/readiness.js';
+import { hasCompleteFirebaseCredentials } from './shared/config/environment.js';
 
 // Routes
 import { authRoutes } from './modules/auth/index.js';
@@ -33,8 +37,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   console.log('🔨 Building Fastify application...');
   
   const app = Fastify({
+    bodyLimit: 256 * 1024,
     logger: {
       level: isProduction ? 'info' : 'debug',
+      redact: {
+        paths: ['req.headers.authorization', 'req.headers.cookie', 'req.body', 'res.headers.set-cookie'],
+        censor: '[REDACTED]',
+      },
       transport: isProduction
         ? undefined
         : {
@@ -78,6 +87,50 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
   });
   console.log('✅ Health check endpoint registered at /health');
+
+  app.get('/ready', {
+    schema: {
+      description: 'Readiness check for database, authentication and migrations',
+      tags: ['Health'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            ready: { type: 'boolean' },
+            code: { type: 'string', enum: ['READY'] },
+          },
+          required: ['ready', 'code'],
+        },
+        503: {
+          type: 'object',
+          properties: {
+            ready: { type: 'boolean' },
+            code: { type: 'string', enum: ['NOT_READY'] },
+          },
+          required: ['ready', 'code'],
+        },
+      },
+    },
+  }, async (_request, reply) => {
+    let database = false;
+    let migrations = false;
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      database = true;
+      const rows = await prisma.$queryRaw<Array<{ ready: boolean }>>`
+        SELECT to_regclass('public._prisma_migrations') IS NOT NULL AS ready
+      `;
+      migrations = rows[0]?.ready === true;
+    } catch {
+      // Readiness response deliberately omits internal dependency errors.
+    }
+    const result = buildReadinessResult({
+      database,
+      migrations,
+      auth: hasCompleteFirebaseCredentials(env),
+    });
+    return reply.code(result.ready ? 200 : 503).send(result);
+  });
 
   // ============================================================================
   // PLUGINS
@@ -127,7 +180,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // Swagger UI with optional authentication
-  await app.register(swaggerUi, {
+  if (shouldEnableSwaggerUi(isProduction, env.SWAGGER_USERNAME, env.SWAGGER_PASSWORD)) {
+    await app.register(swaggerUi, {
     routePrefix: '/docs',
     uiConfig: {
       docExpansion: 'list',
@@ -166,59 +220,13 @@ export async function buildApp(): Promise<FastifyInstance> {
       return swaggerObject;
     },
     transformSpecificationClone: true,
-  });
+    });
+  }
 
-  // CORS
-  // Allow localhost (any port) and any domain containing "recta.app"
+  // CORS: exact origins only. Native and command-line requests without Origin remain allowed.
   await app.register(cors, {
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl requests)
-      if (!origin) {
-        if (isProduction) {
-          console.log('[CORS] Allowing request with no origin');
-        }
-        callback(null, true);
-        return;
-      }
-      
-      // Allow localhost (any protocol, any port)
-      if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-        if (isProduction) {
-          console.log(`[CORS] Allowing localhost origin: ${origin}`);
-        }
-        callback(null, true);
-        return;
-      }
-      
-      // Allow any domain containing "recta.app"
-      if (origin.includes('recta.app')) {
-        if (isProduction) {
-          console.log(`[CORS] Allowing recta.app origin: ${origin}`);
-        }
-        callback(null, true);
-        return;
-      }
-      
-      // In development, allow all origins
-      if (!isProduction) {
-        callback(null, true);
-        return;
-      }
-      
-      // In production, check ALLOWED_ORIGINS env var for additional origins
-      const allowedOrigins = env.ALLOWED_ORIGINS;
-      if (allowedOrigins) {
-        const allowedList = allowedOrigins.split(',').map((o: string) => o.trim()).filter(Boolean);
-        if (allowedList.includes(origin)) {
-          console.log(`[CORS] Allowing origin from ALLOWED_ORIGINS: ${origin}`);
-          callback(null, true);
-          return;
-        }
-      }
-      
-      // Reject if none of the above conditions match
-      console.warn(`[CORS] Rejecting origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'), false);
+      callback(null, isOriginAllowed(origin, parseAllowedOrigins(env.ALLOWED_ORIGINS)));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -353,11 +361,9 @@ export async function startServer(): Promise<void> {
           await runMigrations();
           console.log('✅ Migrations completed successfully');
         } catch (error) {
-          console.error('❌ Failed to run migrations:', error);
-          if (error instanceof Error) {
-            console.error('Migration error details:', error.message);
-            console.error('Stack:', error.stack);
-          }
+          console.error('Migrations failed', {
+            errorName: error instanceof Error ? error.name : 'UnknownError',
+          });
           // Don't exit - allow server to start and respond to health checks
           // Migrations can be retried manually or on next deploy
           console.warn('⚠️  Server will continue running despite migration failure');
@@ -370,7 +376,9 @@ export async function startServer(): Promise<void> {
         initializeFirebase();
         console.log('✅ Firebase initialized');
       } catch (error) {
-        console.error('⚠️  Firebase initialization failed:', error);
+        console.error('Firebase initialization failed', {
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        });
         // Don't exit - server can still respond to health checks
       }
 
@@ -379,16 +387,16 @@ export async function startServer(): Promise<void> {
         await connectDatabase();
         console.log('✅ Database connected');
       } catch (error) {
-        console.error('⚠️  Database connection failed:', error);
+        console.error('Database connection failed', {
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        });
         // Don't exit - server can still respond to health checks
       }
     });
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    if (error instanceof Error) {
-      console.error('Error details:', error.message);
-      console.error('Stack:', error.stack);
-    }
+    console.error('Server startup failed', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
     process.exit(1);
   }
 
@@ -408,5 +416,3 @@ export async function startServer(): Promise<void> {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }
-
-

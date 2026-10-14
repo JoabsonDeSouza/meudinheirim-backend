@@ -8,10 +8,13 @@ declare global {
   var __prisma: PrismaClient | undefined;
 }
 
+let databasePool: Pool | null = null;
+
 function createPrismaClient(): PrismaClient {
   const pool = new Pool({
     connectionString: env.DATABASE_URL,
   });
+  databasePool = pool;
   
   const adapter = new PrismaPg(pool);
   
@@ -37,7 +40,9 @@ export async function connectDatabase(): Promise<void> {
     await prisma.$executeRaw`SET timezone = 'America/Sao_Paulo'`;
     console.log('✅ Database connected (timezone: UTC-3)');
   } catch (error) {
-    console.error('❌ Database connection failed:', error);
+    console.error('Database connection failed', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
     // Don't exit - allow server to start for health checks
     throw error;
   }
@@ -45,10 +50,12 @@ export async function connectDatabase(): Promise<void> {
 
 export async function disconnectDatabase(): Promise<void> {
   await prisma.$disconnect();
+  if (databasePool !== null) {
+    await databasePool.end();
+    databasePool = null;
+  }
   console.log('📴 Database disconnected');
 }
-
-
 
 
 

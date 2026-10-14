@@ -11,7 +11,6 @@ interface AuthenticatedUser {
 }
 
 interface BootstrapContext {
-  readonly prisma: { readonly $disconnect: () => Promise<void> };
   bootstrapUser(firebaseUid: string, email: string): Promise<AuthenticatedUser>;
   householdsForUser(userId: string): Promise<readonly { householdId: string }[]>;
 }
@@ -24,7 +23,6 @@ beforeAll(async () => {
   const { bootstrapAuthenticatedUser } = await import('../../src/shared/auth/bootstrap.js');
   const { prisma } = await import('../../src/shared/db/prisma.js');
   context = {
-    prisma,
     bootstrapUser: bootstrapAuthenticatedUser,
     householdsForUser: async (userId: string) => {
       const memberships = await prisma.householdMember.findMany({
@@ -37,7 +35,6 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await context.prisma.$disconnect();
   await disposeBootstrapTestDb();
 });
 

@@ -260,7 +260,7 @@ export async function inviteMember(householdId: string, inviterId: string, input
     });
   } catch (error) {
     // Log error but don't fail invite creation if notification fails
-    console.error('[inviteMember] Error creating notification:', error);
+    console.error('[inviteMember] Notification creation failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
   }
 
   return invite;
@@ -759,7 +759,7 @@ export async function acceptInvite(inviteId: string, userId: string): Promise<{ 
     }
   } catch (error) {
     // Log error but don't fail invite acceptance if notification update fails
-    console.error('[acceptInvite] Error updating notification:', error);
+    console.error('[acceptInvite] Notification update failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
   }
 
   return member;
@@ -814,7 +814,7 @@ export async function rejectInvite(inviteId: string, userId: string): Promise<{ 
     }
   } catch (error) {
     // Log error but don't fail invite rejection if notification update fails
-    console.error('[rejectInvite] Error updating notification:', error);
+    console.error('[rejectInvite] Notification update failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
   }
 
   return updatedInvite;

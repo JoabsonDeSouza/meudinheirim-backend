@@ -43,7 +43,13 @@ export async function authenticateRequest(
   try {
     verified = await (getTokenVerifier().verify(token));
   } catch (error) {
-    request.log.warn({ error }, 'Token verification failed');
+    request.log.warn(
+      {
+        requestId: request.id,
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+      },
+      'Token verification failed',
+    );
     throw new InvalidTokenError();
   }
 

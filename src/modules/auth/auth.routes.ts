@@ -169,7 +169,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
             }
           } catch (error) {
             // Log error but don't fail signup - referral is not critical
-            console.error('[Referral] Error processing referral code:', error);
+            console.error('[Referral] Referral processing failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
           }
         } else {
           if (existingReferral) {

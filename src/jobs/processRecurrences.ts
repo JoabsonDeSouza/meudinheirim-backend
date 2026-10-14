@@ -93,7 +93,7 @@ async function processDueRecurringTransactions(): Promise<void> {
 
     let processedCount = 0;
     let skippedCount = 0;
-    const errors: Array<{ recurringId: string; error: string }> = [];
+    let errorCount = 0;
 
     for (const recurring of dueRecurring) {
       try {
@@ -166,20 +166,12 @@ async function processDueRecurringTransactions(): Promise<void> {
         }
 
         processedCount++;
-        console.log(
-          `[CronJob] ✅ Processed recurring ${recurring.id} (${recurring.description || 'N/A'}) - ` +
-          `Account: ${recurring.account.name} (${recurring.account.type}) - ` +
-          `Date: ${today.toISOString().split('T')[0]} - ` +
-          `Paid: ${shouldCreateAsPaid} - ` +
-          `Next: ${nextRunAt.toISOString().split('T')[0]}`
-        );
+        console.log('[CronJob] Recurring transaction processed');
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        errors.push({ recurringId: recurring.id, error: errorMessage });
-        console.error(
-          `[CronJob] ❌ Error processing recurring ${recurring.id}:`,
-          errorMessage
-        );
+        errorCount += 1;
+        console.error('[CronJob] Recurring transaction failed', {
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        });
       }
     }
 
@@ -187,11 +179,13 @@ async function processDueRecurringTransactions(): Promise<void> {
     console.log(
       `[CronJob] Processing finished. Processed: ${processedCount}, Skipped: ${skippedCount}`
     );
-    if (errors.length > 0) {
-      console.error('[CronJob] Errors:', errors);
+    if (errorCount > 0) {
+      console.error('[CronJob] Recurring transaction failures', { errorCount });
     }
   } catch (error) {
-    console.error('[CronJob] Fatal error processing recurring transactions:', error);
+    console.error('[CronJob] Fatal recurring transaction failure', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
     throw error; // Re-throw to exit with error code
   }
 }
@@ -209,7 +203,9 @@ async function main(): Promise<void> {
     
     console.log('[CronJob] ✅ Processing completed successfully');
   } catch (error) {
-    console.error('[CronJob] ❌ Fatal error:', error);
+    console.error('[CronJob] Fatal error', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
     process.exit(1);
   } finally {
     // Close database connection
@@ -229,4 +225,3 @@ if (isMainModule || process.argv[1]?.includes('processRecurrences')) {
 
 // Export main function to be called when imported (for Railway cron service)
 export { main as runCronJob };
-

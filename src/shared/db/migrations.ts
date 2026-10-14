@@ -83,7 +83,7 @@ export async function runMigrations(): Promise<void> {
       }
     }
     
-    console.error('❌ Migration failed:', error);
+    console.error('Migration failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     throw error;
   }
 }

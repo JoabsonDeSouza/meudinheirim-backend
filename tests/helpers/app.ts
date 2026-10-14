@@ -9,7 +9,7 @@ function ensureTestEnv(): void {
   const testDbUrl = getBaseTestDatabaseUrl();
   process.env.NODE_ENV = 'test';
   process.env.DATABASE_URL = testDbUrl;
-  process.env.RATE_LIMIT_MAX = '1000';
+  process.env.RATE_LIMIT_MAX = '20';
   envConfigured = true;
 }
 

@@ -503,7 +503,7 @@ const isIncomeForBalance: IsIncomeForBalance = (t: TransactionType) => t === Tra
       );
     } catch (error) {
       // Log error but don't fail transaction creation if notification fails
-      console.error('[createTransaction] Error checking budget thresholds:', error);
+      console.error('[createTransaction] Budget threshold processing failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     }
   }
 
@@ -974,7 +974,7 @@ export async function updateTransaction(
     } catch (error) {
       // Don't fail the transaction update if recurring processing fails
       // Log error but continue
-      console.error('Error processing recurring transactions for credit card:', error);
+      console.error('Recurring transaction processing failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     }
   }
 
@@ -1004,7 +1004,7 @@ export async function updateTransaction(
       );
     } catch (error) {
       // Log error but don't fail transaction update if notification fails
-      console.error('[updateTransaction] Error checking budget thresholds:', error);
+      console.error('[updateTransaction] Budget threshold processing failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     }
   }
 

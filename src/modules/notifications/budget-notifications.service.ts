@@ -162,7 +162,7 @@ export async function checkBudgetThresholds(
           });
           notifications.push(notification);
         } catch (error) {
-          console.error(`[checkBudgetThresholds] Error creating 75% notification for user ${member.user.id}:`, error);
+          console.error('[checkBudgetThresholds] Notification creation failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
         }
       }
     }
@@ -197,7 +197,7 @@ export async function checkBudgetThresholds(
           });
           notifications.push(notification);
         } catch (error) {
-          console.error(`[checkBudgetThresholds] Error creating 100% notification for user ${member.user.id}:`, error);
+          console.error('[checkBudgetThresholds] Notification creation failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
         }
       }
     }
