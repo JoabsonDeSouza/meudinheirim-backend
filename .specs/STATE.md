@@ -31,11 +31,12 @@ All tasks run on the backend worktree/branch above unless a later entry names th
 | T11 · 2026-10-13 | `prisma/schema.prisma`, additive account identity migration, account schemas/services, disposable `db:deploy:test`, CI migration gate, account identity tests | `test:unit` 50; `test:integration` 17; `test:contract` 4; `test:security` 9; `test:migrations` 1; `db:deploy:test` applied to disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `f82022f` | No existing rows were rewritten; currency check is additive and `NOT VALID` |
 | T12 · 2026-10-13 | Transaction V1 schema/service/routes, additive occurredAt/timeZone/deletedAt migration, cursor/OpenAPI tests | `test:unit` 53; `test:integration` 22; `test:contract` 4; `test:security` 10; `test:migrations` 2; `db:deploy:test` applied on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `ef9bc7d` | Legacy unversioned routes remain for compatibility; V1 path uses separate service/routes |
 | T13 · 2026-10-13 | Account version column/migration, atomic V1 transfer application service/route, advisory locks, optimistic checks, transfer tests | `test:unit` 55; `test:integration` 27; `test:contract` 4; `test:security` 11; `test:migrations` 2; `db:deploy:test` no pending migration on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `f5be56c` | Legacy unversioned transfer remains for compatibility; V1 transfer is exact-minor-unit and versioned |
+| T14 · 2026-10-14 | Mutation receipts/payload hashes, entity versions, `SyncChange` monotonic feed, tombstones, migration backfill, `/v1/sync/changes` | `test:unit` 57; `test:integration` 29; `test:contract` 4; `test:security` 12; `test:migrations` 4; `db:deploy:test` applied on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | Pending local commit `feat(sync): add idempotent mutations and change feed` | Legacy unversioned writes remain outside the V1 change feed during compatibility period |
 
 ## Handoff
 
-- Current task: T13 complete; ledger records commit `f5be56c`.
-- Last committed backend SHA: `f5be56c`.
-- Current uncommitted changes: this post-commit evidence update.
-- Next action: begin T14 (idempotency, versioning, change feed) in plan order.
+- Current task: T14 gates passed; commit pending.
+- Last committed backend SHA: `961012b` (T13 STATE follow-up after implementation commit `f5be56c`).
+- Current uncommitted changes: T14 idempotency/change-feed implementation, migration/tests, and STATE update.
+- Next action: commit `feat(sync): add idempotent mutations and change feed`; then proceed T15.
 - No push, PR, deploy, remote database access, or production configuration changes have occurred.

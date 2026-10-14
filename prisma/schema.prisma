@@ -44,6 +44,7 @@ model User {
   referralsAsReferred      Referral?         @relation("Referred")
   notifications            Notification[]
   transactionSplits        TransactionSplit[]
+  syncMutations            SyncMutation[]
 
   @@map("users")
 }
@@ -280,6 +281,8 @@ model Transaction {
   relatedEntityId        String?         @map("related_entity_id") @db.Uuid // ID da entidade relacionada (ex: cartão de crédito para ALLOCATION)
   // Recurring transaction reference
   recurringTransactionId String?         @map("recurring_transaction_id") @db.Uuid
+  clientMutationId       String          @default(uuid()) @map("client_mutation_id") @db.Uuid
+  version                Int             @default(1)
   // Installment fields
   installmentId          String?         @map("installment_id")
   installmentNumber      Int?            @map("installment_number")
@@ -312,6 +315,38 @@ model Transaction {
   @@index([recurringTransactionId])
   @@index([installmentId])
   @@map("transactions")
+}
+
+model SyncMutation {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  clientMutationId String   @map("client_mutation_id") @db.Uuid
+  payloadHash      String   @map("payload_hash") @db.VarChar(64)
+  entityType       String   @map("entity_type") @db.VarChar(32)
+  entityId         String   @map("entity_id") @db.Uuid
+  response         Json
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clientMutationId], map: "sync_mutations_user_mutation_unique")
+  @@index([entityType, entityId])
+  @@map("sync_mutations")
+}
+
+model SyncChange {
+  sequence    BigInt    @id @default(autoincrement())
+  householdId String    @map("household_id") @db.Uuid
+  entityType  String    @map("entity_type") @db.VarChar(32)
+  entityId    String    @map("entity_id") @db.Uuid
+  version     Int       @default(1)
+  payload     Json
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([householdId, sequence])
+  @@index([entityType, entityId])
+  @@map("sync_changes")
 }
 
 // ============================================================================

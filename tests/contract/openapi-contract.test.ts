@@ -39,6 +39,7 @@ describe('versioned OpenAPI contract', () => {
     expect(document.paths['/v1/transactions/']?.get).toBeDefined();
     expect(document.paths['/v1/transactions/']?.post).toBeDefined();
     expect(document.paths['/v1/transactions/transfers']?.post).toBeDefined();
+    expect(document.paths['/v1/sync/changes']?.get).toBeDefined();
   });
 
   it('documents public auth configuration and health/readiness routes', () => {
@@ -46,6 +47,7 @@ describe('versioned OpenAPI contract', () => {
     expect(document.paths['/v1/auth/config']?.get).toBeDefined();
     expect(document.paths['/health']?.get).toBeDefined();
     expect(document.paths['/ready']?.get).toBeDefined();
+    expect(document.paths['/v1/sync/changes']?.get).toBeDefined();
   });
 
   it('publishes the shared typed error envelope schema', () => {
@@ -53,6 +55,8 @@ describe('versioned OpenAPI contract', () => {
     expect(document.components?.schemas?.ApiErrorDto).toBeDefined();
     expect(document.components?.schemas?.MoneyDto).toBeDefined();
     expect(document.components?.schemas?.TransactionV1Dto).toBeDefined();
+    expect(document.components?.schemas?.TransferV1Dto).toBeDefined();
+    expect(document.components?.schemas?.SyncChangeDto).toBeDefined();
   });
 
   it('documents the system category-code catalogue endpoint', () => {

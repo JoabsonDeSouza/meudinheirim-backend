@@ -48,9 +48,10 @@ async function createAccount(name: string, currency: 'BRL' | 'USD', balance: str
   return account.id;
 }
 
-function transferPayload(fromAccountId: string, toAccountId: string, expectedFromVersion = 1, expectedToVersion = 1): CreateTransferV1Input {
+function transferPayload(fromAccountId: string, toAccountId: string, clientMutationId: string, expectedFromVersion = 1, expectedToVersion = 1): CreateTransferV1Input {
   return {
     householdId,
+    clientMutationId,
     fromAccountId,
     toAccountId,
     amount: { minorUnits: 2500, currency: 'BRL' },
@@ -69,13 +70,28 @@ describe('atomic V1 transfers', () => {
       method: 'POST',
       url: '/v1/transactions/transfers',
       headers: { authorization: 'Bearer transfer-owner' },
-      payload: transferPayload(fromAccountId, toAccountId),
+      payload: transferPayload(fromAccountId, toAccountId, '8119922a-33bb-44cc-d5ee-89abcdef0123'),
     });
     expect(response.statusCode).toBe(201);
     const body = response.json() as { transaction: { id: string; kind: string }; fromVersion: number; toVersion: number };
     expect(body.transaction.kind).toBe('transfer');
     expect(body.fromVersion).toBe(2);
     expect(body.toVersion).toBe(2);
+    const replay = await app.inject({
+      method: 'POST',
+      url: '/v1/transactions/transfers',
+      headers: { authorization: 'Bearer transfer-owner' },
+      payload: transferPayload(fromAccountId, toAccountId, '8119922a-33bb-44cc-d5ee-89abcdef0123'),
+    });
+    expect(replay.statusCode).toBe(201);
+    expect((replay.json() as { transaction: { id: string } }).transaction.id).toBe(body.transaction.id);
+    const conflictingReplay = await app.inject({
+      method: 'POST',
+      url: '/v1/transactions/transfers',
+      headers: { authorization: 'Bearer transfer-owner' },
+      payload: { ...transferPayload(fromAccountId, toAccountId, '8119922a-33bb-44cc-d5ee-89abcdef0123'), amount: { minorUnits: 3000, currency: 'BRL' } },
+    });
+    expect(conflictingReplay.statusCode).toBe(409);
     const [from, to, records] = await Promise.all([
       prisma.account.findUniqueOrThrow({ where: { id: fromAccountId } }),
       prisma.account.findUniqueOrThrow({ where: { id: toAccountId } }),
@@ -89,10 +105,11 @@ describe('atomic V1 transfers', () => {
   it('serializes concurrent transfers and rejects stale versions without partial balances', async () => {
     const fromAccountId = await createAccount('Concurrent from', 'BRL', '100.00');
     const toAccountId = await createAccount('Concurrent to', 'BRL', '0.00');
-    const payload = transferPayload(fromAccountId, toAccountId);
+    const payloadA = transferPayload(fromAccountId, toAccountId, '922aa33b-44cc-45dd-e6ff-9abcdef01234');
+    const payloadB = transferPayload(fromAccountId, toAccountId, 'a33bb44c-55dd-46ee-f700-abcdef012345');
     const results = await Promise.all([
-      app.inject({ method: 'POST', url: '/v1/transactions/transfers', headers: { authorization: 'Bearer transfer-owner' }, payload }),
-      app.inject({ method: 'POST', url: '/v1/transactions/transfers', headers: { authorization: 'Bearer transfer-owner' }, payload }),
+      app.inject({ method: 'POST', url: '/v1/transactions/transfers', headers: { authorization: 'Bearer transfer-owner' }, payload: payloadA }),
+      app.inject({ method: 'POST', url: '/v1/transactions/transfers', headers: { authorization: 'Bearer transfer-owner' }, payload: payloadB }),
     ]);
     expect(results.map((result) => result.statusCode).sort()).toEqual([201, 409]);
     const [from, to] = await Promise.all([
@@ -110,7 +127,7 @@ describe('atomic V1 transfers', () => {
       method: 'POST',
       url: '/v1/transactions/transfers',
       headers: { authorization: 'Bearer transfer-owner' },
-      payload: transferPayload(fromAccountId, toAccountId),
+      payload: transferPayload(fromAccountId, toAccountId, 'b44cc55d-66ee-4700-8111-bcdef0123456'),
     });
     expect(insufficient.statusCode).toBe(400);
 
@@ -119,7 +136,7 @@ describe('atomic V1 transfers', () => {
       method: 'POST',
       url: '/v1/transactions/transfers',
       headers: { authorization: 'Bearer transfer-owner' },
-      payload: transferPayload(fromAccountId, usdAccountId),
+      payload: transferPayload(fromAccountId, usdAccountId, 'c55dd66e-7700-4811-9222-cdef01234567'),
     });
     expect(mixedCurrency.statusCode).toBe(400);
 
@@ -157,7 +174,7 @@ describe('atomic V1 transfers', () => {
         method: 'POST',
         url: '/v1/transactions/transfers',
         headers: { authorization: 'Bearer transfer-owner' },
-        payload: transferPayload(fromAccountId, toAccountId),
+        payload: transferPayload(fromAccountId, toAccountId, 'd66ee770-0811-4922-a333-def012345678'),
       });
       expect(response.statusCode).toBe(500);
       const [from, to] = await Promise.all([
@@ -199,7 +216,7 @@ describe('atomic V1 transfers', () => {
       method: 'POST',
       url: '/v1/transactions/transfers',
       headers: { authorization: 'Bearer transfer-owner' },
-      payload: transferPayload(fromAccountId, foreignAccount.id),
+      payload: transferPayload(fromAccountId, foreignAccount.id, 'e7700811-1922-4a33-b444-ef0123456789'),
     });
     expect(response.statusCode).toBe(404);
     const from = await prisma.account.findUniqueOrThrow({ where: { id: fromAccountId } });

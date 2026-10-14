@@ -1,28 +1,14 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { TransactionType } from '../../generated/prisma/enums.js';
-import { NotFoundError, BadRequestError } from '../../shared/errors/index.js';
+import { NotFoundError, BadRequestError, VersionConflictError } from '../../shared/errors/index.js';
 import { getCategoriesByType, CategoryType, AccountType } from '../../shared/enums/index.js';
 import type { CategoryName } from '../../shared/enums/index.js';
-import { minorUnitsToDecimal, decimalToMinorUnits, moneyDtoSchema, type Currency, type MoneyDto } from '../../shared/money/index.js';
+import { minorUnitsToDecimal, decimalToMinorUnits, moneyDtoSchema, type Currency } from '../../shared/money/index.js';
 import { createPaginatedResponse, buildPaginationArgs } from '../../shared/utils/pagination.js';
 import { isCustomCategoryName, toCustomCategoryId, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import { prisma } from '../../shared/db/prisma.js';
-import type { CreateTransactionV1Input, ListTransactionsV1Query, UpdateTransactionV1Input } from './transactions.v1.schema.js';
-
-export interface TransactionV1Dto {
-  readonly id: string;
-  readonly kind: 'expense' | 'income';
-  readonly amount: MoneyDto;
-  readonly categoryCode: string;
-  readonly accountId: string;
-  readonly occurredAt: string;
-  readonly timeZone: string;
-  readonly note: string | null;
-  readonly paid: boolean;
-  readonly createdAt: string;
-  readonly updatedAt: string;
-  readonly deletedAt: string | null;
-}
+import { appendSyncChange, findMutationReplay, payloadHash, saveMutationReceipt } from '../../shared/sync/idempotency.js';
+import { transactionV1DtoSchema, type CreateTransactionV1Input, type ListTransactionsV1Query, type TransactionV1Dto, type UpdateTransactionV1Input } from './transactions.v1.schema.js';
 
 export interface TransactionV1Page {
   readonly items: readonly TransactionV1Dto[];
@@ -135,6 +121,8 @@ function toDto(row: {
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
+  version: number;
+  clientMutationId: string;
 }): TransactionV1Dto {
   if (!row.categoryName || !row.accountId) throw new BadRequestError('Transaction is missing account or category identity');
   const currency = validateCurrency(row.currency);
@@ -151,19 +139,29 @@ function toDto(row: {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     deletedAt: row.deletedAt?.toISOString() ?? null,
+    version: row.version,
+    clientMutationId: row.clientMutationId,
   };
 }
 
 export async function createTransactionV1(
   input: CreateTransactionV1Input,
   householdId: string,
+  userId: string,
 ): Promise<TransactionV1Dto> {
   const type = kindToPrismaType(input.kind);
   const money = moneyDtoSchema.parse(input.amount);
   const amount = minorUnitsToDecimal(money);
   const occurredAt = new Date(input.occurredAt);
 
-  const row = await prisma.$transaction(async (tx) => {
+  const identity = {
+    userId,
+    clientMutationId: input.clientMutationId,
+    hash: payloadHash({ operation: 'transaction.create', householdId, input }),
+  };
+  return prisma.$transaction(async (tx) => {
+    const replay = await findMutationReplay(tx, identity, transactionV1DtoSchema);
+    if (replay !== null) return replay;
     const account = await requireAccount(tx, input.accountId, householdId, money.currency);
     const categoryCode = await validateCategory(tx, input.categoryCode, householdId, type);
     const transaction = await tx.transaction.create({
@@ -178,17 +176,22 @@ export async function createTransactionV1(
         timeZone: input.timeZone,
         notes: input.note,
         paid: input.paid,
+        clientMutationId: input.clientMutationId,
       },
     });
     if (input.paid) {
       await applyBalanceChange(tx, account.id, balanceChange(amount, input.kind, account.type));
     }
-    return transaction;
-  });
-
-  return toDto({
-    ...row,
-    currency: money.currency,
+    const dto = toDto({ ...transaction, currency: money.currency });
+    await saveMutationReceipt(tx, identity, 'transaction', transaction.id, dto);
+    await appendSyncChange(tx, {
+      householdId,
+      entityType: 'transaction',
+      entityId: transaction.id,
+      version: transaction.version,
+      payload: dto,
+    });
+    return dto;
   });
 }
 
@@ -233,14 +236,23 @@ export async function listTransactionsV1(query: ListTransactionsV1Query, househo
 export async function updateTransactionV1(
   transactionId: string,
   householdId: string,
+  userId: string,
   input: UpdateTransactionV1Input,
 ): Promise<TransactionV1Dto> {
-  const row = await prisma.$transaction(async (tx) => {
+  const identity = {
+    userId,
+    clientMutationId: input.clientMutationId,
+    hash: payloadHash({ operation: 'transaction.update', transactionId, householdId, input }),
+  };
+  return prisma.$transaction(async (tx) => {
+    const replay = await findMutationReplay(tx, identity, transactionV1DtoSchema);
+    if (replay !== null) return replay;
     const existing = await tx.transaction.findFirst({
       where: { id: transactionId, householdId, deletedAt: null },
       include: { account: { select: { id: true, type: true, currency: true } } },
     });
     if (!existing || !existing.account) throw new NotFoundError('Transaction');
+    if (existing.version !== input.expectedVersion) throw new VersionConflictError();
     const currency = validateCurrency(existing.account.currency);
     const kind = prismaTypeToKind(existing.type);
     const nextAmount = input.amount ? minorUnitsToDecimal(input.amount) : existing.amount;
@@ -258,8 +270,8 @@ export async function updateTransactionV1(
       await applyBalanceChange(tx, existing.account.id, balanceChange(nextAmount, kind, existing.account.type));
     }
 
-    return tx.transaction.update({
-      where: { id: existing.id },
+    const update = await tx.transaction.updateMany({
+      where: { id: existing.id, householdId, version: input.expectedVersion, deletedAt: null },
       data: {
         amount: nextAmount,
         categoryName: nextCode,
@@ -268,28 +280,75 @@ export async function updateTransactionV1(
         timeZone: input.timeZone,
         notes: input.note,
         paid: nextPaid,
+        version: { increment: 1 },
+        clientMutationId: input.clientMutationId,
       },
+    });
+    if (update.count !== 1) throw new VersionConflictError();
+    const updated = await tx.transaction.findUnique({
+      where: { id: existing.id },
       include: { account: { select: { currency: true } } },
     });
+    if (!updated?.account) throw new NotFoundError('Transaction');
+    const dto = transactionV1DtoSchema.parse(toDto({ ...updated, currency: updated.account.currency }));
+    await saveMutationReceipt(tx, identity, 'transaction', updated.id, dto);
+    await appendSyncChange(tx, {
+      householdId,
+      entityType: 'transaction',
+      entityId: updated.id,
+      version: updated.version,
+      payload: dto,
+    });
+    return dto;
   });
-  if (!row.account) throw new BadRequestError('Transaction account is unavailable');
-  return toDto({ ...row, currency: row.account.currency });
 }
 
-export async function softDeleteTransactionV1(transactionId: string, householdId: string): Promise<void> {
-  await prisma.$transaction(async (tx) => {
+export async function softDeleteTransactionV1(
+  transactionId: string,
+  householdId: string,
+  userId: string,
+  clientMutationId: string,
+  expectedVersion: number,
+): Promise<TransactionV1Dto> {
+  const identity = {
+    userId,
+    clientMutationId,
+    hash: payloadHash({ operation: 'transaction.delete', transactionId, householdId, expectedVersion }),
+  };
+  return prisma.$transaction(async (tx) => {
+    const replay = await findMutationReplay(tx, identity, transactionV1DtoSchema);
+    if (replay !== null) return replay;
     const existing = await tx.transaction.findFirst({
       where: { id: transactionId, householdId, deletedAt: null },
       include: { account: { select: { id: true, type: true } } },
     });
     if (!existing || !existing.account) throw new NotFoundError('Transaction');
+    if (existing.version !== expectedVersion) throw new VersionConflictError();
     if (existing.paid) {
       const kind = prismaTypeToKind(existing.type);
       await applyBalanceChange(tx, existing.account.id, balanceChange(existing.amount, kind, existing.account.type).negated());
     }
-    await tx.transaction.update({
-      where: { id: existing.id },
-      data: { deletedAt: new Date() },
+    const deletedAt = new Date();
+    const update = await tx.transaction.updateMany({
+      where: { id: existing.id, householdId, version: expectedVersion, deletedAt: null },
+      data: { deletedAt, version: { increment: 1 }, clientMutationId },
     });
+    if (update.count !== 1) throw new VersionConflictError();
+    const deleted = await tx.transaction.findUnique({
+      where: { id: existing.id },
+      include: { account: { select: { currency: true } } },
+    });
+    if (!deleted?.account) throw new NotFoundError('Transaction');
+    const dto = transactionV1DtoSchema.parse(toDto({ ...deleted, currency: deleted.account.currency }));
+    await saveMutationReceipt(tx, identity, 'transaction', deleted.id, dto);
+    await appendSyncChange(tx, {
+      householdId,
+      entityType: 'transaction',
+      entityId: deleted.id,
+      version: deleted.version,
+      payload: dto,
+      deletedAt,
+    });
+    return dto;
   });
 }

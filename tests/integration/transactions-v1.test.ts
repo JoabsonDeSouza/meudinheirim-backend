@@ -48,6 +48,7 @@ describe('V1 transaction CRUD and pagination', () => {
       headers: { authorization: 'Bearer tx-v1-owner' },
       payload: {
         householdId,
+        clientMutationId: '1aa22bb3-cc44-4d55-8e66-123456789abc',
         kind: 'expense',
         amount: { minorUnits: 1234, currency: 'BRL' },
         categoryCode: 'FOOD',
@@ -87,9 +88,9 @@ describe('V1 transaction CRUD and pagination', () => {
 
   it('paginates with opaque cursors and deterministic order', async () => {
     const createdIds: string[] = [];
-    for (const [minorUnits, occurredAt] of [
-      [101, '2026-10-14T10:00:00.000Z'],
-      [202, '2026-10-15T10:00:00.000Z'],
+    for (const [minorUnits, occurredAt, clientMutationId] of [
+      [101, '2026-10-14T10:00:00.000Z', '2bb33cc4-dd55-4e66-9f77-23456789abcd'],
+      [202, '2026-10-15T10:00:00.000Z', '3cc44dd5-ee66-4f77-a088-3456789abcde'],
     ] as const) {
       const response = await app.inject({
         method: 'POST',
@@ -97,6 +98,7 @@ describe('V1 transaction CRUD and pagination', () => {
         headers: { authorization: 'Bearer tx-v1-owner' },
         payload: {
           householdId,
+          clientMutationId,
           kind: 'expense',
           amount: { minorUnits, currency: 'BRL' },
           categoryCode: 'FOOD',
@@ -132,10 +134,10 @@ describe('V1 transaction CRUD and pagination', () => {
     expect(nextPageBody.items).toHaveLength(1);
     expect(nextPageBody.items[0].id).not.toBe(firstPageBody.items[0].id);
 
-    for (const transactionId of createdIds) {
+    for (const [index, transactionId] of createdIds.entries()) {
       await app.inject({
         method: 'DELETE',
-        url: `/v1/transactions/${transactionId}?householdId=${householdId}`,
+        url: `/v1/transactions/${transactionId}?householdId=${householdId}&clientMutationId=${index === 0 ? '6aa77119-22aa-43bb-c4dd-789abcdef012' : '7bb8822a-33bb-44cc-d5ee-89abcdef0123'}&expectedVersion=1`,
         headers: { authorization: 'Bearer tx-v1-owner' },
       });
     }
@@ -157,22 +159,61 @@ describe('V1 transaction CRUD and pagination', () => {
       url: `/v1/transactions?householdId=${householdId}&limit=10`,
       headers: { authorization: 'Bearer tx-v1-owner' },
     });
-    const transactionId = (listed.json() as { items: Array<{ id: string }> }).items[0].id;
+    const transaction = (listed.json() as { items: Array<{ id: string; version: number }> }).items[0];
+    const transactionId = transaction.id;
     const updated = await app.inject({
       method: 'PATCH',
       url: `/v1/transactions/${transactionId}`,
       headers: { authorization: 'Bearer tx-v1-owner' },
-      payload: { note: 'updated market' },
+      payload: {
+        clientMutationId: '4dd55ee6-ff77-4088-91aa-456789abcdef',
+        expectedVersion: transaction.version,
+        note: 'updated market',
+      },
     });
     expect(updated.statusCode).toBe(200);
-    expect((updated.json() as { note: string }).note).toBe('updated market');
+    const updatedTransaction = updated.json() as { note: string; version: number };
+    expect(updatedTransaction.note).toBe('updated market');
+
+    const updateReplay = await app.inject({
+      method: 'PATCH',
+      url: `/v1/transactions/${transactionId}`,
+      headers: { authorization: 'Bearer tx-v1-owner' },
+      payload: {
+        clientMutationId: '4dd55ee6-ff77-4088-91aa-456789abcdef',
+        expectedVersion: transaction.version,
+        note: 'updated market',
+      },
+    });
+    expect(updateReplay.statusCode).toBe(200);
+    expect((updateReplay.json() as { version: number }).version).toBe(updatedTransaction.version);
+
+    const staleUpdate = await app.inject({
+      method: 'PATCH',
+      url: `/v1/transactions/${transactionId}`,
+      headers: { authorization: 'Bearer tx-v1-owner' },
+      payload: {
+        clientMutationId: '8ff9900a-11bb-42cc-b3dd-89abcdef0123',
+        expectedVersion: transaction.version,
+        note: 'stale edit',
+      },
+    });
+    expect(staleUpdate.statusCode).toBe(409);
+    expect(staleUpdate.json().error.code).toBe('VERSION_CONFLICT');
 
     const deleted = await app.inject({
       method: 'DELETE',
-      url: `/v1/transactions/${transactionId}`,
+      url: `/v1/transactions/${transactionId}?clientMutationId=5ee66ff7-0088-4199-a2bb-56789abcdef0&expectedVersion=${updatedTransaction.version}`,
       headers: { authorization: 'Bearer tx-v1-owner' },
     });
-    expect(deleted.statusCode).toBe(204);
+    expect(deleted.statusCode).toBe(200);
+    const deleteReplay = await app.inject({
+      method: 'DELETE',
+      url: `/v1/transactions/${transactionId}?clientMutationId=5ee66ff7-0088-4199-a2bb-56789abcdef0&expectedVersion=${updatedTransaction.version}`,
+      headers: { authorization: 'Bearer tx-v1-owner' },
+    });
+    expect(deleteReplay.statusCode).toBe(200);
+    expect((deleteReplay.json() as { deletedAt: string | null }).deletedAt).toBeTruthy();
     const afterDelete = await app.inject({
       method: 'GET',
       url: `/v1/transactions?householdId=${householdId}`,

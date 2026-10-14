@@ -175,6 +175,7 @@ describe('authorization matrix (accounts/financial surfaces)', () => {
       headers: authHeaders('sec-viewer'),
       payload: {
         householdId: ownerHouseholdId,
+        clientMutationId: '6ff77008-1199-42aa-b3cc-6789abcdef01',
         kind: 'expense',
         amount: { minorUnits: 100, currency: 'BRL' },
         categoryCode: 'FOOD',
@@ -200,6 +201,7 @@ describe('authorization matrix (accounts/financial surfaces)', () => {
       headers: authHeaders('sec-viewer'),
       payload: {
         householdId: ownerHouseholdId,
+        clientMutationId: '70088119-22aa-43bb-c4dd-789abcdef012',
         fromAccountId: accounts[0].id,
         toAccountId: accounts[1].id,
         amount: { minorUnits: 100, currency: 'BRL' },
@@ -242,6 +244,15 @@ describe('authorization matrix (accounts/financial surfaces)', () => {
       },
     });
     expect(create.statusCode).toBe(403);
+  });
+
+  it('outsider cannot read another household change feed', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/sync/changes?householdId=${ownerHouseholdId}`,
+      headers: authHeaders('sec-outsider'),
+    });
+    expect(response.statusCode).toBe(403);
   });
 
   it('cross-household resource reads return 404 without leaking data', async () => {

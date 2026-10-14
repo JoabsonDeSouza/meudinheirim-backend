@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
-import { authMiddleware } from '../../shared/middleware/auth.middleware.js';
-import { ensurePersonalHousehold, requireEditor, requireHouseholdMember } from '../../shared/middleware/authorization.middleware.js';
+import { authMiddleware, getAuthUser } from '../../shared/middleware/auth.middleware.js';
+import { ensurePersonalHousehold, getUserByFirebaseUid, requireEditor, requireHouseholdMember } from '../../shared/middleware/authorization.middleware.js';
+import { BadRequestError } from '../../shared/errors/index.js';
 import { createTransactionV1Schema, listTransactionsV1QuerySchema, transactionV1HouseholdQuerySchema, transactionV1ParamsSchema, updateTransactionV1Schema } from './transactions.v1.schema.js';
 import { createTransactionV1, listTransactionsV1, softDeleteTransactionV1, updateTransactionV1 } from './transactions.v1.service.js';
 import { createTransferV1 } from './transfers.v1.service.js';
@@ -61,9 +62,10 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
       security: [{ bearerAuth: [] }],
       body: {
         type: 'object',
-        required: ['kind', 'amount', 'categoryCode', 'accountId', 'occurredAt', 'timeZone'],
+        required: ['clientMutationId', 'kind', 'amount', 'categoryCode', 'accountId', 'occurredAt', 'timeZone'],
         properties: {
           householdId: { type: 'string', format: 'uuid' },
+          clientMutationId: { type: 'string', format: 'uuid' },
           kind: { type: 'string', enum: ['expense', 'income'] },
           amount: {
             type: 'object',
@@ -91,7 +93,9 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
     const input = createTransactionV1Schema.parse(request.body);
     const householdId = input.householdId ?? await ensurePersonalHousehold(request);
     await requireEditor(request, householdId);
-    const transaction = await createTransactionV1(input, householdId);
+    const authUser = getAuthUser(request);
+    const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
+    const transaction = await createTransactionV1(input, householdId, user.id);
     return reply.code(201).send(transaction);
   });
 
@@ -102,9 +106,10 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
       security: [{ bearerAuth: [] }],
       body: {
         type: 'object',
-        required: ['fromAccountId', 'toAccountId', 'amount', 'expectedFromVersion', 'expectedToVersion', 'occurredAt', 'timeZone'],
+        required: ['clientMutationId', 'fromAccountId', 'toAccountId', 'amount', 'expectedFromVersion', 'expectedToVersion', 'occurredAt', 'timeZone'],
         properties: {
           householdId: { type: 'string', format: 'uuid' },
+          clientMutationId: { type: 'string', format: 'uuid' },
           fromAccountId: { type: 'string', format: 'uuid' },
           toAccountId: { type: 'string', format: 'uuid' },
           amount: {
@@ -129,7 +134,9 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
     const input = createTransferV1Schema.parse(request.body);
     const householdId = input.householdId ?? await ensurePersonalHousehold(request);
     await requireEditor(request, householdId);
-    const result = await createTransferV1(input, householdId);
+    const authUser = getAuthUser(request);
+    const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
+    const result = await createTransferV1(input, householdId, user.id);
     return reply.code(201).send(result);
   });
 
@@ -145,7 +152,10 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
       },
       body: {
         type: 'object',
+        required: ['clientMutationId', 'expectedVersion'],
         properties: {
+          clientMutationId: { type: 'string', format: 'uuid' },
+          expectedVersion: { type: 'integer', minimum: 1 },
           amount: {
             type: 'object',
             required: ['minorUnits', 'currency'],
@@ -174,8 +184,10 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
     const query = transactionV1HouseholdQuerySchema.parse(request.query);
     const householdId = query.householdId ?? await ensurePersonalHousehold(request);
     await requireEditor(request, householdId);
+    const authUser = getAuthUser(request);
+    const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
     const input = updateTransactionV1Schema.parse(request.body);
-    const transaction = await updateTransactionV1(transactionId, householdId, input);
+    const transaction = await updateTransactionV1(transactionId, householdId, user.id, input);
     return reply.send(transaction);
   });
 
@@ -191,16 +203,32 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
       },
       querystring: {
         type: 'object',
-        properties: { householdId: { type: 'string', format: 'uuid' } },
+        required: ['clientMutationId', 'expectedVersion'],
+        properties: {
+          householdId: { type: 'string', format: 'uuid' },
+          clientMutationId: { type: 'string', format: 'uuid' },
+          expectedVersion: { type: 'integer', minimum: 1 },
+        },
       },
-      response: { 204: { type: 'null' } },
+      response: { 200: { type: 'object', additionalProperties: true } },
     },
   }, async (request, reply) => {
     const { transactionId } = transactionV1ParamsSchema.parse(request.params);
     const query = transactionV1HouseholdQuerySchema.parse(request.query);
     const householdId = query.householdId ?? await ensurePersonalHousehold(request);
     await requireEditor(request, householdId);
-    await softDeleteTransactionV1(transactionId, householdId);
-    return reply.code(204).send();
+    if (!query.clientMutationId || !query.expectedVersion) {
+      throw new BadRequestError('clientMutationId and expectedVersion are required for delete');
+    }
+    const authUser = getAuthUser(request);
+    const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
+    const transaction = await softDeleteTransactionV1(
+      transactionId,
+      householdId,
+      user.id,
+      query.clientMutationId,
+      query.expectedVersion,
+    );
+    return reply.send(transaction);
   });
 }

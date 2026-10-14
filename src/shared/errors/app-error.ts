@@ -122,6 +122,12 @@ export class VersionConflictError extends AppError {
   }
 }
 
+export class IdempotencyConflictError extends AppError {
+  constructor() {
+    super('clientMutationId was reused with a different payload', 409, 'IDEMPOTENCY_CONFLICT');
+  }
+}
+
 // ============================================================================
 // RATE LIMIT ERRORS (429)
 // ============================================================================
@@ -131,8 +137,6 @@ export class RateLimitError extends AppError {
     super(message, 429, 'RATE_LIMIT_EXCEEDED');
   }
 }
-
-
 
 
 

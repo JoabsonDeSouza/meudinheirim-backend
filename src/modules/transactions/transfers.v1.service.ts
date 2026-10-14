@@ -1,23 +1,9 @@
 import { TransactionType } from '../../generated/prisma/enums.js';
 import { BadRequestError, NotFoundError, VersionConflictError } from '../../shared/errors/index.js';
-import { minorUnitsToDecimal, type Currency, type MoneyDto } from '../../shared/money/index.js';
+import { minorUnitsToDecimal, type Currency } from '../../shared/money/index.js';
 import { prisma } from '../../shared/db/prisma.js';
-import type { CreateTransferV1Input } from './transfers.v1.schema.js';
-
-export interface TransferV1Dto {
-  readonly transaction: {
-    readonly id: string;
-    readonly kind: 'transfer';
-    readonly amount: MoneyDto;
-    readonly fromAccountId: string;
-    readonly toAccountId: string;
-    readonly occurredAt: string;
-    readonly timeZone: string;
-    readonly note: string | null;
-  };
-  readonly fromVersion: number;
-  readonly toVersion: number;
-}
+import { transferV1DtoSchema, type CreateTransferV1Input, type TransferV1Dto } from './transfers.v1.schema.js';
+import { appendSyncChange, findMutationReplay, payloadHash, saveMutationReceipt } from '../../shared/sync/idempotency.js';
 
 function currency(value: string): Currency {
   if (value !== 'BRL' && value !== 'USD') throw new BadRequestError('Account currency is not supported');
@@ -27,14 +13,22 @@ function currency(value: string): Currency {
 export async function createTransferV1(
   input: CreateTransferV1Input,
   householdId: string,
+  userId: string,
 ): Promise<TransferV1Dto> {
   if (input.fromAccountId === input.toAccountId) {
     throw new BadRequestError('Cannot transfer to the same account');
   }
   const amount = minorUnitsToDecimal(input.amount);
   const accountIds = [input.fromAccountId, input.toAccountId].sort();
+  const identity = {
+    userId,
+    clientMutationId: input.clientMutationId,
+    hash: payloadHash({ operation: 'transaction.transfer', householdId, input }),
+  };
 
   return prisma.$transaction(async (tx) => {
+    const replay = await findMutationReplay(tx, identity, transferV1DtoSchema);
+    if (replay !== null) return replay;
     for (const accountId of accountIds) {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`account-version:${accountId}`}))`;
     }
@@ -96,10 +90,11 @@ export async function createTransferV1(
         timeZone: input.timeZone,
         notes: input.note,
         paid: true,
+        clientMutationId: input.clientMutationId,
       },
     });
 
-    return {
+    const result: TransferV1Dto = {
       transaction: {
         id: transaction.id,
         kind: 'transfer',
@@ -109,9 +104,20 @@ export async function createTransferV1(
         occurredAt: occurredAt.toISOString(),
         timeZone: input.timeZone,
         note: input.note ?? null,
+        version: transaction.version,
+        clientMutationId: input.clientMutationId,
       },
       fromVersion: input.expectedFromVersion + 1,
       toVersion: input.expectedToVersion + 1,
     };
+    await saveMutationReceipt(tx, identity, 'transaction', transaction.id, result);
+    await appendSyncChange(tx, {
+      householdId,
+      entityType: 'transaction',
+      entityId: transaction.id,
+      version: transaction.version,
+      payload: result,
+    });
+    return result;
   });
 }

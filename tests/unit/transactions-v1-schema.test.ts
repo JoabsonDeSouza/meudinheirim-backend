@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createTransactionV1Schema } from '../../src/modules/transactions/transactions.v1.schema.js';
 
 const validInput = {
+  clientMutationId: '7c294a5b-c0e1-49cf-aeb3-ff1e71235664',
   kind: 'expense',
   amount: { minorUnits: 1234, currency: 'BRL' },
   categoryCode: 'FOOD',

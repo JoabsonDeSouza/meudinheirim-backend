@@ -25,6 +25,7 @@ import { categoryRoutes } from './modules/categories/index.js';
 import { categoryV1Routes } from './modules/categories/categories.v1.routes.js';
 import { transactionRoutes } from './modules/transactions/index.js';
 import { transactionV1Routes } from './modules/transactions/transactions.v1.routes.js';
+import { syncRoutes } from './modules/sync/sync.routes.js';
 import { budgetRoutes } from './modules/budgets/index.js';
 import { savingsGoalRoutes } from './modules/savings-goals/index.js';
 import { recurringTransactionRoutes } from './modules/recurring-transactions/index.js';
@@ -187,7 +188,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           },
           TransactionV1Dto: {
             type: 'object',
-            required: ['id', 'kind', 'amount', 'categoryCode', 'accountId', 'occurredAt', 'timeZone', 'note', 'paid', 'createdAt', 'updatedAt', 'deletedAt'],
+            required: ['id', 'kind', 'amount', 'categoryCode', 'accountId', 'occurredAt', 'timeZone', 'note', 'paid', 'createdAt', 'updatedAt', 'deletedAt', 'version', 'clientMutationId'],
             properties: {
               id: { type: 'string', format: 'uuid' },
               kind: { type: 'string', enum: ['expense', 'income'] },
@@ -201,6 +202,48 @@ export async function buildApp(): Promise<FastifyInstance> {
               createdAt: { type: 'string', format: 'date-time' },
               updatedAt: { type: 'string', format: 'date-time' },
               deletedAt: { type: ['string', 'null'], format: 'date-time' },
+              version: { type: 'integer', minimum: 1 },
+              clientMutationId: { type: 'string', format: 'uuid' },
+            },
+            additionalProperties: false,
+          },
+          TransferV1Dto: {
+            type: 'object',
+            required: ['transaction', 'fromVersion', 'toVersion'],
+            properties: {
+              transaction: {
+                type: 'object',
+                required: ['id', 'kind', 'amount', 'fromAccountId', 'toAccountId', 'occurredAt', 'timeZone', 'note', 'version', 'clientMutationId'],
+                properties: {
+                  id: { type: 'string', format: 'uuid' },
+                  kind: { type: 'string', enum: ['transfer'] },
+                  amount: { $ref: '#/components/schemas/MoneyDto' },
+                  fromAccountId: { type: 'string', format: 'uuid' },
+                  toAccountId: { type: 'string', format: 'uuid' },
+                  occurredAt: { type: 'string', format: 'date-time' },
+                  timeZone: { type: 'string' },
+                  note: { type: ['string', 'null'] },
+                  version: { type: 'integer', minimum: 1 },
+                  clientMutationId: { type: 'string', format: 'uuid' },
+                },
+                additionalProperties: false,
+              },
+              fromVersion: { type: 'integer', minimum: 1 },
+              toVersion: { type: 'integer', minimum: 1 },
+            },
+            additionalProperties: false,
+          },
+          SyncChangeDto: {
+            type: 'object',
+            required: ['sequence', 'entityType', 'entityId', 'version', 'payload', 'deletedAt', 'createdAt'],
+            properties: {
+              sequence: { type: 'string', pattern: '^[1-9][0-9]*$' },
+              entityType: { type: 'string' },
+              entityId: { type: 'string', format: 'uuid' },
+              version: { type: 'integer', minimum: 1 },
+              payload: { type: 'object', additionalProperties: true },
+              deletedAt: { type: ['string', 'null'], format: 'date-time' },
+              createdAt: { type: 'string', format: 'date-time' },
             },
             additionalProperties: false,
           },
@@ -248,6 +291,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         { name: 'Savings Goals', description: 'Savings goal endpoints' },
         { name: 'Recurring Transactions', description: 'Recurring transaction endpoints' },
         { name: 'Feedback', description: 'User feedback endpoints' },
+        { name: 'Sync', description: 'Idempotent mutations and change feed' },
       ],
     },
   });
@@ -386,6 +430,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(categoryV1Routes, { prefix: '/v1/categories' });
   await app.register(transactionRoutes, { prefix: '/transactions' });
   await app.register(transactionV1Routes, { prefix: '/v1/transactions' });
+  await app.register(syncRoutes, { prefix: '/v1/sync' });
   await app.register(budgetRoutes, { prefix: '/budgets' });
   await app.register(budgetRoutes, { prefix: '/v1/budgets' });
   await app.register(savingsGoalRoutes, { prefix: '/savings-goals' });

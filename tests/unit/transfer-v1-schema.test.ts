@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createTransferV1Schema } from '../../src/modules/transactions/transfers.v1.schema.js';
 
 const transfer = {
+  clientMutationId: '0d384bb4-d7d0-427e-93a1-4011d2ad2767',
   householdId: 'f531b2aa-0083-4f63-b0d1-5f9f1c3bce43',
   fromAccountId: '5a7cde52-ae08-4ce0-92a4-c6a87127e130',
   toAccountId: 'e5acba7c-5150-4f4a-9dce-a79fb2f31c11',

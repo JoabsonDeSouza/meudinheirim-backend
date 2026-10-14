@@ -17,6 +17,7 @@ const ianaTimeZoneSchema = z.string().min(1).max(64).refine((value) => {
 
 export const createTransferV1Schema = z.object({
   householdId: z.string().uuid().optional(),
+  clientMutationId: z.string().uuid(),
   fromAccountId: z.string().uuid(),
   toAccountId: z.string().uuid(),
   amount: transferAmountSchema,
@@ -31,3 +32,22 @@ export const createTransferV1Schema = z.object({
 });
 
 export type CreateTransferV1Input = z.infer<typeof createTransferV1Schema>;
+
+export const transferV1DtoSchema = z.object({
+  transaction: z.object({
+    id: z.string().uuid(),
+    kind: z.literal('transfer'),
+    amount: moneyDtoSchema,
+    fromAccountId: z.string().uuid(),
+    toAccountId: z.string().uuid(),
+    occurredAt: z.string().datetime(),
+    timeZone: z.string(),
+    note: z.string().nullable(),
+    version: z.number().int().positive(),
+    clientMutationId: z.string().uuid(),
+  }).strict(),
+  fromVersion: z.number().int().positive(),
+  toVersion: z.number().int().positive(),
+}).strict();
+
+export type TransferV1Dto = z.infer<typeof transferV1DtoSchema>;

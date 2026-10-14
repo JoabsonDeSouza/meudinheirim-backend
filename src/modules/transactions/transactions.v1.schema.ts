@@ -21,6 +21,7 @@ export const transactionAmountV1Schema = moneyDtoSchema.refine(
 
 export const createTransactionV1Schema = z.object({
   householdId: z.string().uuid().optional(),
+  clientMutationId: z.string().uuid(),
   kind: transactionKindV1Schema,
   amount: transactionAmountV1Schema,
   categoryCode: categoryNameSchema,
@@ -34,13 +35,15 @@ export const createTransactionV1Schema = z.object({
 export type CreateTransactionV1Input = z.infer<typeof createTransactionV1Schema>;
 
 export const updateTransactionV1Schema = z.object({
+  clientMutationId: z.string().uuid(),
+  expectedVersion: z.number().int().positive(),
   amount: transactionAmountV1Schema.optional(),
   categoryCode: categoryNameSchema.optional(),
   occurredAt: z.string().datetime().optional(),
   timeZone: timeZoneSchema.optional(),
   note: z.string().max(1000).nullable().optional(),
   paid: z.boolean().optional(),
-}).strict().refine((value) => Object.keys(value).length > 0, {
+}).strict().refine((value) => Object.keys(value).some((key) => !['clientMutationId', 'expectedVersion'].includes(key)), {
   message: 'At least one transaction field must be provided',
 });
 
@@ -63,4 +66,25 @@ export const transactionV1ParamsSchema = z.object({
 
 export const transactionV1HouseholdQuerySchema = z.object({
   householdId: z.string().uuid().optional(),
+  clientMutationId: z.string().uuid().optional(),
+  expectedVersion: z.coerce.number().int().positive().optional(),
 }).strict();
+
+export const transactionV1DtoSchema = z.object({
+  id: z.string().uuid(),
+  kind: transactionKindV1Schema,
+  amount: moneyDtoSchema,
+  categoryCode: categoryNameSchema,
+  accountId: z.string().uuid(),
+  occurredAt: z.string().datetime(),
+  timeZone: timeZoneSchema,
+  note: z.string().nullable(),
+  paid: z.boolean(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  deletedAt: z.string().datetime().nullable(),
+  version: z.number().int().positive(),
+  clientMutationId: z.string().uuid(),
+}).strict();
+
+export type TransactionV1Dto = z.infer<typeof transactionV1DtoSchema>;
