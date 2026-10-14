@@ -35,11 +35,12 @@ All tasks run on the backend worktree/branch above unless a later entry names th
 | T15 · 2026-10-14 | Budget currency and V1 MoneyDto routes, recurring V1 MoneyDto/timezone routes, occurrence marker table/lock, UTC civil recurrence calculation, exact Decimal balance/recalculation | `test:unit` 61; `test:integration` 32; `test:contract` 4; `test:security` 13; `test:migrations` 6; `db:deploy:test` no pending migration on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `6d79a9f` | Legacy unversioned budget/recurring endpoints retain numeric DTOs; V1 endpoints and cron occurrence path use currency-aware Money/Decimal |
 | T16 · 2026-10-14 | Invoice/cycle/payment/migration-issue models, card-cycle assignment for V1 and recurring purchases, legacy marker conversion/quarantine, v1 invoice list, legacy payment route deprecation | `test:unit` 69; `test:integration` 33; `test:contract` 4; `test:security` 13; `test:migrations` 7; `db:deploy:test` applied to disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `2d2e46a` | Legacy v0 invoice summary/payment/undo endpoints now return `410` pending T17 V1 lifecycle; unrecognized attachment values are quarantined in `invoice_migration_issues` |
 | T17 · 2026-10-14 | Invoice lifecycle state machine and close/pay/refund routes; invoice/account advisory locks, optimistic versions, mutation replay, transaction/payment/refund records, account balance reconciliation, sync feed updates, additive invoice version/refund relation migration | `test:unit` 71; `test:integration` 39 (including close/pay/refund, replay, concurrency, rollback, authorization, currency); `test:contract` 4; `test:security` 13; `test:migrations` 7; `db:deploy:test` applied 26 migrations to disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `ba611f5` | None |
+| T18 · 2026-10-14 | V1 dashboard summary by currency using Decimal/minor units, transfer-excluded income/expense/net balance, stable recent-ten endpoint ordered by `occurredAt` and `id`, authenticated household membership, OpenAPI and integration coverage | `test:unit` 71; `test:integration` 41; `test:contract` 4; `test:security` 13; `test:migrations` 7 | lint/typecheck/forbidden typing/build/diff-check pass | `72c378f` | Legacy unversioned dashboard overview remains available at `/dashboard/overview`; `/v1/dashboard/overview` now serves the currency-safe contract |
 
 ## Handoff
 
-- Current task: T17 complete; implementation commit `ba611f5`.
-- Last committed backend SHA: `ba611f5`.
-- Current uncommitted changes: T17 post-commit evidence update.
-- Next action: commit this evidence, then begin T18 dashboard and latest-transactions work in plan order.
+- Current task: T18 complete; implementation commit `72c378f`.
+- Last committed backend SHA: `72c378f`.
+- Current uncommitted changes: T18 post-commit evidence update.
+- Next action: commit this evidence, then begin T19 insights aggregates in plan order.
 - No push, PR, deploy, remote database access, or production configuration changes have occurred.
