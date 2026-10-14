@@ -28,12 +28,12 @@ All tasks run on the backend worktree/branch above unless a later entry names th
 | T8 · 2026-10-13 | `src/shared/money/index.ts`, precise Decimal/minor-unit converters and grouped currency aggregation | `test:unit` 40; `test:integration` 13; `test:security` 8; build/lint/typecheck | all executed gates pass; zero forbidden typing | `887b62a` | Existing service `.toNumber()` calculation paths remain for their dependent ledger/analytics tasks; Money primitives are in place, full route migration is still pending |
 | T9 · 2026-10-13 | `/v1` aliases, opaque cursor encoding/validation, stable API error requestId, OpenAPI shared error schema | `test:unit` 43; `test:integration` 14; `test:contract` 3; `test:security` 8; build/lint/typecheck | all executed gates pass; zero forbidden typing | `b09c215` | Legacy unversioned paths remain registered during transition |
 | T10 · 2026-10-13 | `src/modules/categories/categories.schema.ts`, `categories.v1.routes.ts`, app route registration, category contract docs, unit/integration/contract tests | `test:unit` 46; `test:integration` 15; `test:contract` 4; `test:security` 9 | lint/typecheck/forbidden typing/build/diff-check pass | `eebd9c8` | No migration added because DB already stores enum codes/UUID custom identity; rationale and evidence in `docs/audit/category-contract.md` |
-| T11 · 2026-10-13 | `prisma/schema.prisma`, additive account identity migration, account schemas/services, disposable `db:deploy:test`, CI migration gate, account identity tests | `test:unit` 50; `test:integration` 17; `test:contract` 4; `test:security` 9; `test:migrations` 1; `db:deploy:test` applied to disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | Pending local commit `feat(accounts): expose stable account and card identity` | No existing rows were rewritten; currency check is additive and `NOT VALID` |
+| T11 · 2026-10-13 | `prisma/schema.prisma`, additive account identity migration, account schemas/services, disposable `db:deploy:test`, CI migration gate, account identity tests | `test:unit` 50; `test:integration` 17; `test:contract` 4; `test:security` 9; `test:migrations` 1; `db:deploy:test` applied to disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `f82022f` | No existing rows were rewritten; currency check is additive and `NOT VALID` |
 
 ## Handoff
 
-- Current task: T11 gates passed; commit pending.
-- Last committed backend SHA: `eebd9c8`.
-- Current uncommitted changes: T11 account identity implementation/migration/tests and current STATE update (inspect `git status --short` before continuing).
-- Next action: atomic commit `feat(accounts): expose stable account and card identity`; then proceed T12 in plan order.
+- Current task: T11 complete; ledger records commit `f82022f`.
+- Last committed backend SHA: `f82022f`.
+- Current uncommitted changes: this post-commit evidence update.
+- Next action: begin T12 in plan order.
 - No push, PR, deploy, remote database access, or production configuration changes have occurred.
