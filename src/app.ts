@@ -36,6 +36,7 @@ import { notificationRoutes } from './modules/notifications/index.js';
 import { dashboardRoutes } from './modules/dashboard/index.js';
 import { dashboardV1Routes } from './modules/dashboard/dashboard.v1.routes.js';
 import { creditCardInvoiceV1Routes } from './modules/credit-cards/invoices.v1.routes.js';
+import { insightsV1Routes } from './modules/analytics/insights/insights.v1.routes.js';
 
 /**
  * Build the Fastify application
@@ -467,6 +468,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(notificationRoutes, { prefix: '/v1/notifications' });
   await app.register(dashboardRoutes, { prefix: '/dashboard' });
   await app.register(dashboardV1Routes, { prefix: '/v1/dashboard' });
+  await app.register(insightsV1Routes, { prefix: '/v1/insights' });
 
   return app;
 }
