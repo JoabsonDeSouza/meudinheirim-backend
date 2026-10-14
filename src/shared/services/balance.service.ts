@@ -145,7 +145,7 @@ export async function updateAccountBalances(
 export async function updateBalanceForNormalTransaction(
   tx: Prisma.TransactionClient,
   accountId: string,
-  balanceChange: number
+  balanceChange: number | Prisma.Decimal
 ): Promise<void> {
   // Get current balances
   const account = await tx.account.findUnique({
@@ -161,19 +161,21 @@ export async function updateBalanceForNormalTransaction(
   }
   
   // Calculate new values ensuring consistency
-  const currentAvailable = account.availableBalance.toNumber();
-  const currentAllocated = account.allocatedBalance.toNumber();
-  const newAvailable = currentAvailable + balanceChange;
+  const exactChange = balanceChange instanceof Prisma.Decimal
+    ? balanceChange
+    : new Prisma.Decimal(balanceChange);
+  const newAvailable = account.availableBalance.add(exactChange);
+  const currentAllocated = account.allocatedBalance;
   const newAllocated = currentAllocated; // Doesn't change for normal transactions
-  const newTotal = newAvailable + newAllocated; // Always ensure total = available + allocated
+  const newTotal = newAvailable.add(newAllocated); // Always ensure total = available + allocated
   
   // Update all balance fields ensuring consistency
   await tx.account.update({
     where: { id: accountId },
     data: {
-      balance: { increment: balanceChange }, // Legacy field
-      totalBalance: new Prisma.Decimal(newTotal), // Recalculate to ensure consistency
-      availableBalance: new Prisma.Decimal(newAvailable),
+      balance: { increment: exactChange }, // Legacy field
+      totalBalance: newTotal, // Recalculate to ensure consistency
+      availableBalance: newAvailable,
       // allocatedBalance remains unchanged
     },
   });
@@ -385,7 +387,8 @@ export async function recalculateCreditCardLimit(
   }
 
   // Get paid debt from account balance (transactions marked as paid)
-  const paidDebt = Math.max(0, creditCard.balance.toNumber());
+  const zero = new Prisma.Decimal(0);
+  const paidDebt = creditCard.balance.greaterThan(zero) ? creditCard.balance : zero;
   
   // Get unpaid transactions that also consume the limit
   // Only count EXPENSE transactions (INCOME transactions reduce debt)
@@ -406,25 +409,26 @@ export async function recalculateCreditCardLimit(
   // Calculate unpaid debt (only EXPENSE transactions increase debt)
   const unpaidDebt = unpaidTransactions.reduce((sum, t) => {
     if (t.type === TransactionType.EXPENSE) {
-      return sum + t.amount.toNumber();
+      return sum.add(t.amount);
     } else if (t.type === TransactionType.INCOME) {
       // INCOME transactions reduce debt
-      return sum - t.amount.toNumber();
+      return sum.sub(t.amount);
     }
     return sum;
-  }, 0);
+  }, zero);
   
   // Total debt = paid debt + unpaid debt
-  const totalDebt = Math.max(0, paidDebt + unpaidDebt);
-  
-  const totalLimit = creditCard.totalLimit?.toNumber() || creditCard.creditLimit?.toNumber() || 0;
-  const availableLimit = Math.max(0, totalLimit - totalDebt);
+  const totalDebtRaw = paidDebt.add(unpaidDebt);
+  const totalDebt = totalDebtRaw.greaterThan(zero) ? totalDebtRaw : zero;
+
+  const totalLimit = creditCard.totalLimit ?? creditCard.creditLimit ?? zero;
+  const availableLimitRaw = totalLimit.sub(totalDebt);
+  const availableLimit = availableLimitRaw.greaterThan(zero) ? availableLimitRaw : zero;
 
   await tx.account.update({
     where: { id: creditCardId },
     data: {
-      availableLimit: new Prisma.Decimal(availableLimit),
+      availableLimit,
     },
   });
 }
-

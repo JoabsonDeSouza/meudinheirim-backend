@@ -214,6 +214,22 @@ describe('authorization matrix (accounts/financial surfaces)', () => {
     expect(response.statusCode).toBe(403);
   });
 
+  it('viewer cannot create a budget in a shared household', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/budgets',
+      headers: authHeaders('sec-viewer'),
+      payload: {
+        householdId: ownerHouseholdId,
+        categoryCode: 'FOOD',
+        type: 'EXPENSE',
+        month: '2026-10',
+        monthlyLimit: { minorUnits: 10000, currency: 'BRL' },
+      },
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
   it('preferences endpoint rejects isPremium mass assignment', async () => {
     const response = await app.inject({
       method: 'PUT',

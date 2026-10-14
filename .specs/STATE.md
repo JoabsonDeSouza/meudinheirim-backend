@@ -32,11 +32,12 @@ All tasks run on the backend worktree/branch above unless a later entry names th
 | T12 · 2026-10-13 | Transaction V1 schema/service/routes, additive occurredAt/timeZone/deletedAt migration, cursor/OpenAPI tests | `test:unit` 53; `test:integration` 22; `test:contract` 4; `test:security` 10; `test:migrations` 2; `db:deploy:test` applied on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `ef9bc7d` | Legacy unversioned routes remain for compatibility; V1 path uses separate service/routes |
 | T13 · 2026-10-13 | Account version column/migration, atomic V1 transfer application service/route, advisory locks, optimistic checks, transfer tests | `test:unit` 55; `test:integration` 27; `test:contract` 4; `test:security` 11; `test:migrations` 2; `db:deploy:test` no pending migration on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `f5be56c` | Legacy unversioned transfer remains for compatibility; V1 transfer is exact-minor-unit and versioned |
 | T14 · 2026-10-14 | Mutation receipts/payload hashes, entity versions, `SyncChange` monotonic feed, tombstones, migration backfill, `/v1/sync/changes` | `test:unit` 57; `test:integration` 29; `test:contract` 4; `test:security` 12; `test:migrations` 4; `db:deploy:test` applied on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `44f53b2` | Legacy unversioned writes remain outside the V1 change feed during compatibility period |
+| T15 · 2026-10-14 | Budget currency and V1 MoneyDto routes, recurring V1 MoneyDto/timezone routes, occurrence marker table/lock, UTC civil recurrence calculation, exact Decimal balance/recalculation | `test:unit` 61; `test:integration` 32; `test:contract` 4; `test:security` 13; `test:migrations` 6; `db:deploy:test` no pending migration on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | Pending local commit `fix(recurring): make budgets and schedules idempotent` | Legacy unversioned budget/recurring endpoints retain numeric DTOs; V1 endpoints and cron occurrence path use currency-aware Money/Decimal |
 
 ## Handoff
 
-- Current task: T14 complete; ledger records commit `44f53b2`.
-- Last committed backend SHA: `44f53b2`.
-- Current uncommitted changes: this post-commit evidence update.
-- Next action: commit this STATE hash update and proceed T15.
+- Current task: T15 gates passed; commit pending.
+- Last committed backend SHA: `3108a20` (T14 STATE ledger follow-up after implementation commit `44f53b2`).
+- Current uncommitted changes: T15 budget/recurrence implementation, migration, tests, and STATE update.
+- Next action: commit `fix(recurring): make budgets and schedules idempotent`; then proceed T16.
 - No push, PR, deploy, remote database access, or production configuration changes have occurred.

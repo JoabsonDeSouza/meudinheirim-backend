@@ -300,6 +300,7 @@ model Transaction {
   toAccount            Account?              @relation("TransactionToAccount", fields: [toAccountId], references: [id], onDelete: SetNull)
   relatedAccount       Account?              @relation("TransactionRelatedAccount", fields: [relatedEntityId], references: [id], onDelete: SetNull)
   recurringTransaction RecurringTransaction? @relation(fields: [recurringTransactionId], references: [id], onDelete: SetNull)
+  recurringOccurrence  RecurringOccurrence?
   splits                TransactionSplit[]    // Divisões da transação entre membros
 
   // Indexes for common queries
@@ -360,6 +361,7 @@ model Budget {
   monthlyLimit Decimal      @map("monthly_limit") @db.Decimal(15, 2)
   month        DateTime     @db.Date // Month this budget applies to (start of month)
   type         CategoryType // INCOME or EXPENSE
+  currency     String       @default("BRL") @db.VarChar(3)
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
@@ -367,7 +369,7 @@ model Budget {
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   // One budget per category per household per month
-  @@unique([householdId, categoryName, month])
+  @@unique([householdId, categoryName, month, currency])
   @@index([householdId])
   @@index([householdId, month])
   @@map("budgets")
@@ -414,6 +416,7 @@ model RecurringTransaction {
   amount       Decimal             @db.Decimal(15, 2)
   description  String?
   frequency    RecurrenceFrequency
+  timeZone     String              @default("UTC") @map("time_zone") @db.VarChar(64)
   startDate    DateTime            @map("start_date") @db.Date
   endDate      DateTime?           @map("end_date") @db.Date
   nextRunAt    DateTime            @map("next_run_at") @db.Date
@@ -426,6 +429,7 @@ model RecurringTransaction {
   household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
   account      Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
   transactions Transaction[]
+  occurrences  RecurringOccurrence[]
 
   // Indexes
   // REGRA DE NEGÓCIO: Índice em nextRunAt para otimizar busca do cronjob
@@ -434,6 +438,21 @@ model RecurringTransaction {
   @@index([nextRunAt])
   @@index([isActive, nextRunAt])
   @@map("recurring_transactions")
+}
+
+model RecurringOccurrence {
+  id                    String   @id @default(uuid()) @db.Uuid
+  recurringTransactionId String  @map("recurring_transaction_id") @db.Uuid
+  occurrenceDate         DateTime @map("occurrence_date") @db.Date
+  transactionId          String   @unique @map("transaction_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  recurringTransaction RecurringTransaction @relation(fields: [recurringTransactionId], references: [id], onDelete: Cascade)
+  transaction          Transaction          @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@unique([recurringTransactionId, occurrenceDate])
+  @@index([occurrenceDate])
+  @@map("recurring_occurrences")
 }
 
 // ============================================================================
