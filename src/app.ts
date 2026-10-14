@@ -22,6 +22,7 @@ import { userRoutes } from './modules/users/index.js';
 import { householdRoutes } from './modules/households/index.js';
 import { accountRoutes } from './modules/accounts/index.js';
 import { categoryRoutes } from './modules/categories/index.js';
+import { categoryV1Routes } from './modules/categories/categories.v1.routes.js';
 import { transactionRoutes } from './modules/transactions/index.js';
 import { budgetRoutes } from './modules/budgets/index.js';
 import { savingsGoalRoutes } from './modules/savings-goals/index.js';
@@ -353,7 +354,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(accountRoutes, { prefix: '/accounts' });
   await app.register(accountRoutes, { prefix: '/v1/accounts' });
   await app.register(categoryRoutes, { prefix: '/categories' });
-  await app.register(categoryRoutes, { prefix: '/v1/categories' });
+  await app.register(categoryV1Routes, { prefix: '/v1/categories' });
   await app.register(transactionRoutes, { prefix: '/transactions' });
   await app.register(transactionRoutes, { prefix: '/v1/transactions' });
   await app.register(budgetRoutes, { prefix: '/budgets' });

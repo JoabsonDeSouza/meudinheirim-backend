@@ -76,6 +76,18 @@ function authHeaders(token: string): { authorization: string } {
 }
 
 describe('authorization matrix (accounts/financial surfaces)', () => {
+  it('returns stable system category codes without localized labels', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/categories/system',
+      headers: authHeaders('sec-owner'),
+    });
+    expect(response.statusCode).toBe(200);
+    const body = response.json() as { items: Array<Record<string, unknown>> };
+    expect(body.items.some((category) => category.code === 'FOOD')).toBe(true);
+    expect(body.items.every((category) => !('label' in category) && !('name' in category))).toBe(true);
+  });
+
   it('owner can list household accounts and create an account', async () => {
     const list = await app.inject({
       method: 'GET',

@@ -51,4 +51,9 @@ describe('versioned OpenAPI contract', () => {
     const document = app.swagger() as OpenApiDocument;
     expect(document.components?.schemas?.ApiErrorDto).toBeDefined();
   });
+
+  it('documents the system category-code catalogue endpoint', () => {
+    const document = app.swagger() as OpenApiDocument;
+    expect(document.paths['/v1/categories/system']?.get).toBeDefined();
+  });
 });
