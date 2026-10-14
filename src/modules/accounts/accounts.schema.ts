@@ -24,7 +24,7 @@ export const createAccountSchema = z.object({
   // Default in service layer is 10 when not provided.
   bestDayOffset: z.number().int().min(1).max(30).optional(),
   linkedAccountId: z.string().uuid().optional(),
-});
+}).strict();
 
 export type CreateAccountInput = z.infer<typeof createAccountSchema>;
 
@@ -43,7 +43,7 @@ export const updateAccountSchema = z.object({
   closingDay: z.number().int().min(1).max(31).nullable().optional(),
   bestDayOffset: z.number().int().min(1).max(30).nullable().optional(),
   linkedAccountId: z.string().uuid().nullable().optional(),
-});
+}).strict();
 
 export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
 
@@ -52,7 +52,7 @@ export type UpdateAccountInput = z.infer<typeof updateAccountSchema>;
  */
 export const accountIdParamSchema = z.object({
   accountId: z.string().uuid(),
-});
+}).strict();
 
 export type AccountIdParam = z.infer<typeof accountIdParamSchema>;
 
@@ -62,7 +62,7 @@ export type AccountIdParam = z.infer<typeof accountIdParamSchema>;
 export const listAccountsQuerySchema = z.object({
   householdId: z.string().uuid().optional(), // Optional - will use personal household if not provided
   includeInactive: z.coerce.boolean().default(false),
-});
+}).strict();
 
 export type ListAccountsQuery = z.infer<typeof listAccountsQuerySchema>;
 
@@ -74,7 +74,7 @@ export const transferSchema = z.object({
   toAccountId: z.string().uuid(),
   amount: z.coerce.number().positive('Amount must be positive'),
   description: z.string().max(255).optional(),
-});
+}).strict();
 
 export type TransferInput = z.infer<typeof transferSchema>;
 
@@ -84,10 +84,9 @@ export type TransferInput = z.infer<typeof transferSchema>;
 export const adjustBalanceSchema = z.object({
   newBalance: z.coerce.number(),
   reason: z.string().max(255).optional(),
-});
+}).strict();
 
 export type AdjustBalanceInput = z.infer<typeof adjustBalanceSchema>;
-
 
 
 

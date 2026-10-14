@@ -83,26 +83,15 @@ export async function updateUserPreferences(
   // Prepare update data
   const updateData: Prisma.UserUpdateInput = {
     ...(input.displayName !== undefined && { displayName: input.displayName }),
-    ...(input.isPremium !== undefined && { isPremium: input.isPremium }),
     ...(input.onboardingCompleted !== undefined && {
       onboardingCompleted: input.onboardingCompleted,
-    }),
-    ...(input.onboardingRestartedAt !== undefined && {
-      onboardingRestartedAt: input.onboardingRestartedAt,
     }),
     ...(input.theme !== undefined && { theme: input.theme }),
     ...(input.baseCurrency !== undefined && { baseCurrency: input.baseCurrency }),
     ...(input.locale !== undefined && { locale: input.locale }),
     ...(input.country !== undefined && { country: input.country }),
-    ...(input.referralCode !== undefined && { referralCode: input.referralCode }),
     ...(input.dashboardPreferences !== undefined && {
       dashboardPreferences: input.dashboardPreferences === undefined ? undefined : (input.dashboardPreferences as Prisma.InputJsonValue),
-    }),
-    ...(input.lastRecurringProcessedMonth !== undefined && {
-      lastRecurringProcessedMonth: input.lastRecurringProcessedMonth,
-    }),
-    ...(input.lastRecurringProcessedAt !== undefined && {
-      lastRecurringProcessedAt: input.lastRecurringProcessedAt,
     }),
     preferencesUpdatedAt: new Date(),
   };
