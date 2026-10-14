@@ -41,7 +41,9 @@ describe('versioned OpenAPI contract', () => {
     expect(document.paths['/v1/transactions/transfers']?.post).toBeDefined();
     expect(document.paths['/v1/sync/changes']?.get).toBeDefined();
     expect(document.paths['/v1/credit-cards/invoices']?.get).toBeDefined();
-    expect(document.paths['/v1/credit-cards/invoices']?.get).toBeDefined();
+    expect(document.paths['/v1/credit-cards/invoices/{invoiceId}/close']?.post).toBeDefined();
+    expect(document.paths['/v1/credit-cards/invoices/{invoiceId}/pay']?.post).toBeDefined();
+    expect(document.paths['/v1/credit-cards/invoices/{invoiceId}/refund']?.post).toBeDefined();
   });
 
   it('documents public auth configuration and health/readiness routes', () => {

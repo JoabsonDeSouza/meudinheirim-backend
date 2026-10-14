@@ -312,6 +312,7 @@ model Transaction {
   recurringOccurrence  RecurringOccurrence?
   invoice              CreditCardInvoice?    @relation("InvoiceCharges", fields: [invoiceId], references: [id], onDelete: SetNull)
   invoicePayment       InvoicePayment?
+  invoiceRefund        InvoicePayment?      @relation("InvoiceRefund")
   invoiceMigrationIssue InvoiceMigrationIssue?
   splits                TransactionSplit[]    // Divisões da transação entre membros
 
@@ -480,6 +481,7 @@ model CreditCardInvoice {
   totalAmount   Decimal       @default(0) @map("total_amount") @db.Decimal(15, 2)
   closedAt      DateTime?     @map("closed_at") @db.Timestamptz(3)
   paidAt        DateTime?     @map("paid_at") @db.Timestamptz(3)
+  version       Int           @default(1)
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
@@ -499,10 +501,13 @@ model InvoicePayment {
   invoiceId     String   @map("invoice_id") @db.Uuid
   transactionId String   @unique @map("transaction_id") @db.Uuid
   amount        Decimal  @db.Decimal(15, 2)
+  refundedAt    DateTime? @map("refunded_at") @db.Timestamptz(3)
+  refundTransactionId String? @unique @map("refund_transaction_id") @db.Uuid
   createdAt     DateTime @default(now()) @map("created_at")
 
   invoice     CreditCardInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   transaction Transaction       @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  refundTransaction Transaction? @relation("InvoiceRefund", fields: [refundTransactionId], references: [id], onDelete: SetNull)
 
   @@index([invoiceId])
   @@map("invoice_payments")

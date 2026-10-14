@@ -134,6 +134,12 @@ export class InvoiceLifecycleRequiredError extends AppError {
   }
 }
 
+export class InvalidInvoiceTransitionError extends AppError {
+  constructor(from: string, action: string) {
+    super(`Cannot ${action} invoice in ${from} state`, 409, 'INVALID_INVOICE_TRANSITION');
+  }
+}
+
 // ============================================================================
 // RATE LIMIT ERRORS (429)
 // ============================================================================
@@ -143,5 +149,4 @@ export class RateLimitError extends AppError {
     super(message, 429, 'RATE_LIMIT_EXCEEDED');
   }
 }
-
 
