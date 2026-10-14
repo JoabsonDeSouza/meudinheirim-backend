@@ -1,10 +1,9 @@
 import type { AccountType as Prisma_AccountType } from '../../generated/prisma/enums.js';
 import type { TransactionType as Prisma_TransactionType } from '../../generated/prisma/enums.js';
-import type { AccountStatus as Prisma_AccountStatus } from '../../generated/prisma/enums.js';
 
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
-import { NotFoundError, BadRequestError, ForbiddenError } from '../../shared/errors/index.js';
+import { NotFoundError, BadRequestError, ForbiddenError, InvoiceLifecycleRequiredError } from '../../shared/errors/index.js';
 import {
   createPaginatedResponse,
   type PaginatedResponse,
@@ -16,6 +15,8 @@ import { CategoryName } from '../../shared/enums/index.js';
 import { isCustomCategoryName, toCustomCategoryId, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import { executeRecurringTransaction } from '../recurring-transactions/recurring-transactions.service.js';
 import { applyTransfer, applyAllocation, applyDeallocation, recalculateCreditCardLimit, updateBalanceForNormalTransaction } from '../../shared/services/balance.service.js';
+import { currencySchema } from '../../shared/money/index.js';
+import { getOrCreateInvoiceForTransaction } from '../credit-cards/domain/invoice-cycle.js';
 import type {
   CreateTransactionInput,
   UpdateTransactionInput,
@@ -183,6 +184,19 @@ const isIncomeForBalance: IsIncomeForBalance = (t: TransactionType) => t === Tra
   const isSplit = input.isSplit === true && input.splits && input.splits.length > 0;
   
   const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    const invoiceId = account?.type === AccountType.CREDIT && accountId
+      ? await getOrCreateInvoiceForTransaction(tx, {
+          householdId: account.householdId,
+          cardAccountId: account.id,
+          currency: currencySchema.parse(account.currency),
+          closingDay: account.closingDay,
+          dueDay: account.dueDay,
+          occurredAt: date,
+          timeZone: 'UTC',
+          amount: new Prisma.Decimal(amount),
+          transactionType,
+        })
+      : null;
     const transaction = await tx.transaction.create({
       data: {
         householdId,
@@ -190,6 +204,9 @@ const isIncomeForBalance: IsIncomeForBalance = (t: TransactionType) => t === Tra
         accountId,
         categoryName,
         amount: new Prisma.Decimal(amount),
+        invoiceId,
+        occurredAt: date,
+        timeZone: 'UTC',
         description,
         date,
         notes,
@@ -199,7 +216,6 @@ const isIncomeForBalance: IsIncomeForBalance = (t: TransactionType) => t === Tra
         ...(input.installmentId && { installmentId: input.installmentId }),
         ...(input.installmentNumber && { installmentNumber: input.installmentNumber }),
         ...(input.totalInstallments && { totalInstallments: input.totalInstallments }),
-        ...(input.attachmentUrl && { attachmentUrl: input.attachmentUrl }),
       },
       include: {
         account: {
@@ -864,7 +880,6 @@ export async function updateTransaction(
         ...(input.installmentId !== undefined && { installmentId: input.installmentId }),
         ...(input.installmentNumber !== undefined && { installmentNumber: input.installmentNumber }),
         ...(input.totalInstallments !== undefined && { totalInstallments: input.totalInstallments }),
-        ...(input.attachmentUrl !== undefined && { attachmentUrl: input.attachmentUrl }),
       },
       include: {
         account: {
@@ -1743,664 +1758,33 @@ export async function getSpendingHeatmap(householdId: string, month?: string): P
 }
 
 /**
- * Calculate credit card invoice for a specific month
+ * Legacy invoice reads are disabled after invoice-cycle migration. Use the persisted
+ * `/v1/credit-cards/invoices` contract, which no longer encodes metadata in attachmentUrl.
  */
 export async function calculateCreditCardInvoice(
-  accountId: string,
-  month: string,
-  householdId: string,
-  pagination?: { limit?: number; cursor?: string }
-): Promise<{ data: { accountId: string; month: string; previousBalance: number; currentExpenses: number; currentPayments: number; total: number; isPaid: boolean; paymentTransactions: { id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }[]; invoiceTransactions: { amount: number; id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }[]; }; pagination: { nextCursor: string | null; hasMore: boolean; total: number; }; }> {
-  // Verify account is a credit card
-  const account = await prisma.account.findFirst({
-    where: { id: accountId, householdId, isActive: true },
-  });
-
-  if (!account) {
-    throw new NotFoundError('Account');
-  }
-
-  if (account.type !== AccountType.CREDIT) {
-    throw new BadRequestError('Account is not a credit card');
-  }
-
-  // Parse month (YYYY-MM) to start and end dates
-  const [year, monthNum] = month.split('-').map(Number);
-  
-  // Se closingDay estiver definido, usar período de fechamento; senão, usar mês completo
-  let invoiceStart: Date;
-  let invoiceEnd: Date;
-  
-  if (account.closingDay) {
-    const closingDay = account.closingDay;
-    // Período da fatura: do closingDay do mês anterior até o closingDay do mês atual (exclusive)
-    // Exemplo: se closingDay = 7 e month = 2024-02, a fatura é de 7/jan até 6/fev
-    invoiceStart = new Date(year, monthNum - 2, closingDay); // Mês anterior, dia de fechamento
-    invoiceEnd = new Date(year, monthNum - 1, closingDay - 1, 23, 59, 59, 999); // Mês atual, dia anterior ao fechamento
-  } else {
-    // Comportamento padrão: mês completo (compatibilidade com contas antigas)
-    invoiceStart = new Date(year, monthNum - 1, 1);
-    invoiceEnd = new Date(year, monthNum, 0, 23, 59, 59, 999);
-  }
-
-  // Get all transactions of the credit card before the invoice period
-  const previousTransactions = await prisma.transaction.findMany({
-    where: {
-      accountId,
-      householdId,
-      date: { lt: invoiceStart },
-      attachmentUrl: { equals: null }, // Exclude payment transactions
-    },
-  });
-
-  // Calculate previous net expenses (expenses - income) before the month
-  // For credit cards: expenses increase debt, income decreases debt
-  const previousNetExpenses = previousTransactions.reduce((sum: number, t) => {
-    if (!t.categoryName) return sum;
-    // Use transaction type if available, otherwise infer from category
-    const isIncome = t.type === TransactionType.INCOME || 
-      (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
-    if (isIncome) {
-      return sum - t.amount.toNumber(); // Income decreases debt
-    } else {
-      return sum + t.amount.toNumber(); // Expenses increase debt
-    }
-  }, 0);
-
-  // Get all payment transactions before the invoice period
-  const previousPayments = await prisma.transaction.findMany({
-    where: {
-      householdId,
-      attachmentUrl: { startsWith: `invoice_pay:${accountId}:` },
-      date: { lt: invoiceStart },
-    },
-  });
-
-  const previousPaymentsTotal = previousPayments.reduce(
-    (sum, t) => sum + t.amount.toNumber(),
-    0
-  );
-
-  // Calculate previous balance based on transactions
-  // Previous balance = all net expenses (expenses - income) before this month - all payments before this month
-  let previousBalance = 0;
-  
-  if (previousTransactions.length > 0) {
-    // Calculate based on previous transactions (considering both expenses and income)
-    previousBalance = Math.max(0, previousNetExpenses - previousPaymentsTotal);
-  } else {
-    // No previous transactions - check if account has initial debt
-    // Get current invoice period transactions to see if balance was modified
-    const currentPeriodTransactions = await prisma.transaction.findMany({
-      where: {
-        OR: [
-          { accountId, householdId, date: { gte: invoiceStart, lte: invoiceEnd } },
-          { householdId, attachmentUrl: { startsWith: `invoice_pay:${accountId}:` }, date: { gte: invoiceStart, lte: invoiceEnd } },
-        ],
-      },
-    });
-    
-    if (currentPeriodTransactions.length === 0) {
-      // No transactions at all - use account balance as initial debt
-      previousBalance = Math.max(0, account.balance.toNumber());
-    } else {
-      // Has transactions in current period but none before
-      // Calculate net change in current period
-      let currentPeriodNetChange = 0;
-      for (const t of currentPeriodTransactions) {
-        if (t.attachmentUrl?.startsWith(`invoice_pay:${accountId}:`)) {
-          // Payment decreases debt
-          currentPeriodNetChange -= t.amount.toNumber();
-        } else if (t.accountId === accountId && t.categoryName) {
-          // Use transaction type if available, otherwise infer from category
-          const isIncome = t.type === TransactionType.INCOME || 
-            (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
-          if (isIncome) {
-            currentPeriodNetChange -= t.amount.toNumber(); // Income decreases debt
-          } else {
-            currentPeriodNetChange += t.amount.toNumber(); // Expense increases debt
-          }
-        }
-      }
-      
-      // Initial balance = current balance - current period net change
-      previousBalance = Math.max(0, account.balance.toNumber() - currentPeriodNetChange);
-    }
-  }
-
-  // Get current invoice period transactions (purchases in the period)
-  const currentPeriodTransactions = await prisma.transaction.findMany({
-    where: {
-      accountId,
-      householdId,
-      date: { gte: invoiceStart, lte: invoiceEnd },
-      attachmentUrl: { equals: null }, // Exclude payment transactions
-    },
-  });
-
-  // Calculate current net expenses (expenses - income) in the period
-  // For credit cards: expenses increase debt, income decreases debt
-  const currentNetExpenses = currentPeriodTransactions.reduce((sum: number, t) => {
-    if (!t.categoryName) return sum;
-    // Use transaction type if available, otherwise infer from category
-    const isIncome = t.type === TransactionType.INCOME || 
-      (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
-    if (isIncome) {
-      return sum - t.amount.toNumber(); // Income decreases debt
-    } else {
-      return sum + t.amount.toNumber(); // Expenses increase debt
-    }
-  }, 0);
-
-  // Get payment transactions for this invoice period
-  // monthKey format: "YYYY-M" where M is 0-indexed (0-11)
-  const monthKey = `${year}-${monthNum - 1}`;
-  const technicalIdentifier = `invoice_pay:${accountId}:${monthKey}`;
-  
-  const currentPayments = await prisma.transaction.findMany({
-    where: {
-      householdId,
-      attachmentUrl: technicalIdentifier,
-      date: { gte: invoiceStart, lte: invoiceEnd },
-    },
-  });
-
-  const currentPaymentsTotal = currentPayments.reduce(
-    (sum, t) => sum + t.amount.toNumber(),
-    0
-  );
-
-  // Total invoice = previous balance + current net expenses (expenses - income) - current payments
-  const invoiceTotal = previousBalance + currentNetExpenses - currentPaymentsTotal;
-
-  // Get invoice transactions (purchases + payments) with pagination
-  const limit = pagination?.limit || 50;
-  const whereClause = {
-    OR: [
-      {
-        accountId,
-        householdId,
-        date: { gte: invoiceStart, lte: invoiceEnd },
-      },
-      {
-        householdId,
-        attachmentUrl: technicalIdentifier,
-      },
-    ],
-  };
-
-  // Build pagination args
-  const allInvoiceTransactions = pagination?.cursor
-    ? await prisma.transaction.findMany({
-        where: whereClause,
-        orderBy: { date: 'desc' },
-        take: limit + 1,
-        cursor: { id: pagination.cursor },
-        skip: 1,
-      })
-    : await prisma.transaction.findMany({
-        where: whereClause,
-        orderBy: { date: 'desc' },
-        take: limit + 1,
-      });
-
-  // Check if there are more transactions
-  const hasMore = allInvoiceTransactions.length > limit;
-  const transactions = hasMore ? allInvoiceTransactions.slice(0, limit) : allInvoiceTransactions;
-  const nextCursor = hasMore && transactions.length > 0 ? transactions[transactions.length - 1].id : null;
-
-  // Get total count for pagination info
-  const totalCount = await prisma.transaction.count({ where: whereClause });
-
-  return {
-    data: {
-      accountId,
-      month,
-      previousBalance,
-      currentExpenses: currentNetExpenses, // Net expenses (expenses - income)
-      currentPayments: currentPaymentsTotal,
-      total: Math.max(0, invoiceTotal),
-      isPaid: currentPaymentsTotal > 0 && invoiceTotal <= 0.01,
-      paymentTransactions: currentPayments,
-      invoiceTransactions: transactions.map(t => ({
-        ...t,
-        amount: t.amount.toNumber(),
-      })),
-    },
-    pagination: {
-      nextCursor,
-      hasMore,
-      total: totalCount,
-    },
-  };
+  _accountId: string,
+  _month: string,
+  _householdId: string,
+  _pagination?: { limit?: number; cursor?: string },
+): Promise<never> {
+  throw new InvoiceLifecycleRequiredError();
 }
 
 /**
- * Pay credit card invoice
+ * Legacy invoice payment is disabled; T17 exposes atomic persisted-invoice payments.
  */
-export async function payCreditCardInvoice(input: PayInvoiceInput): Promise<{ paymentTransaction: { id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }; creditCardAccount: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; sourceAccount: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; invoiceTotal: number; previousBalance: number; currentExpenses: number; paidAmount: number; }> {
-  // householdId must be provided (resolved in routes via ensurePersonalHousehold)
-  if (!input.householdId) {
-    throw new BadRequestError('householdId is required');
-  }
-  const householdId = input.householdId;
-
-  // accountId must be provided (from route params)
-  if (!input.accountId) {
-    throw new BadRequestError('accountId is required');
-  }
-  const accountId = input.accountId;
-
-  const { sourceAccountId, amount, month, description } = input;
-
-  // Parse month
-  const [year, monthNum] = month.split('-').map(Number);
-  const monthKey = `${year}-${monthNum - 1}`;
-  const technicalIdentifier = `invoice_pay:${accountId}:${monthKey}`;
-
-  return await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    // 1. Verify credit card account
-    const creditCard = await tx.account.findFirst({
-      where: { id: accountId, householdId, isActive: true },
-    });
-
-    if (!creditCard) {
-      throw new NotFoundError('Credit card account');
-    }
-
-    if (creditCard.type !== AccountType.CREDIT) {
-      throw new BadRequestError('Account is not a credit card');
-    }
-
-    // 2. Verify source account
-    const sourceAccount = await tx.account.findFirst({
-      where: { id: sourceAccountId, householdId, isActive: true },
-    });
-
-    if (!sourceAccount) {
-      throw new NotFoundError('Source account');
-    }
-
-    if (sourceAccount.type === AccountType.CREDIT) {
-      throw new BadRequestError('Cannot pay invoice from credit card');
-    }
-
-    // 3. Calculate invoice (inline calculation to avoid nested transactions)
-    const [invoiceYear, invoiceMonthNum] = month.split('-').map(Number);
-    
-    // Se closingDay estiver definido, usar período de fechamento; senão, usar mês completo
-    let invoiceMonthStart: Date;
-    let invoiceMonthEnd: Date;
-    
-    if (creditCard.closingDay) {
-      const closingDay = creditCard.closingDay;
-      // Período da fatura: do closingDay do mês anterior até o closingDay do mês atual (exclusive)
-      invoiceMonthStart = new Date(invoiceYear, invoiceMonthNum - 2, closingDay);
-      invoiceMonthEnd = new Date(invoiceYear, invoiceMonthNum - 1, closingDay - 1, 23, 59, 59, 999);
-    } else {
-      // Comportamento padrão: mês completo
-      invoiceMonthStart = new Date(invoiceYear, invoiceMonthNum - 1, 1);
-      invoiceMonthEnd = new Date(invoiceYear, invoiceMonthNum, 0, 23, 59, 59, 999);
-    }
-    
-    // Get previous transactions
-    const invoicePreviousTransactions = await tx.transaction.findMany({
-      where: {
-        accountId,
-        householdId: householdId!,
-        date: { lt: invoiceMonthStart },
-        attachmentUrl: { equals: null },
-      },
-    });
-
-    // Calculate previous net expenses (expenses - income) before the invoice period
-    const invoicePreviousNetExpenses = invoicePreviousTransactions.reduce((sum: number, t) => {
-      if (!t.categoryName) return sum;
-      // Use transaction type if available, otherwise infer from category
-      const isIncome = t.type === TransactionType.INCOME || 
-        (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
-      if (isIncome) {
-        return sum - t.amount.toNumber(); // Income decreases debt
-      } else {
-        return sum + t.amount.toNumber(); // Expenses increase debt
-      }
-    }, 0);
-
-    const invoicePreviousPayments = await tx.transaction.findMany({
-      where: {
-        householdId: householdId!,
-        attachmentUrl: { startsWith: `invoice_pay:${accountId}:` },
-        date: { lt: invoiceMonthStart },
-      },
-    });
-
-    const invoicePreviousPaymentsTotal = invoicePreviousPayments.reduce(
-      (sum, t) => sum + t.amount.toNumber(),
-      0
-    );
-
-    // Calculate previous balance based on transactions
-    // Previous balance = all expenses before this month - all payments before this month
-    let invoicePreviousBalance = 0;
-    
-    if (invoicePreviousTransactions.length > 0) {
-      // Calculate based on previous transactions
-      invoicePreviousBalance = Math.max(0, invoicePreviousNetExpenses - invoicePreviousPaymentsTotal);
-    } else {
-      // No previous transactions - check if account has initial debt
-      // Get current period transactions to see if balance was modified
-      const currentPeriodTransactions = await tx.transaction.findMany({
-        where: {
-          OR: [
-            { accountId, householdId: householdId!, date: { gte: invoiceMonthStart, lte: invoiceMonthEnd } },
-            { householdId: householdId!, attachmentUrl: { startsWith: `invoice_pay:${accountId}:` }, date: { gte: invoiceMonthStart, lte: invoiceMonthEnd } },
-          ],
-        },
-      });
-      
-      if (currentPeriodTransactions.length === 0) {
-        // No transactions at all - use account balance as initial debt
-        invoicePreviousBalance = Math.max(0, creditCard.balance.toNumber());
-      } else {
-        // Has transactions in current period but none before
-        // Calculate net change in current period
-        let currentPeriodNetChange = 0;
-        for (const t of currentPeriodTransactions) {
-          if (t.attachmentUrl?.startsWith(`invoice_pay:${accountId}:`)) {
-            // Payment decreases debt
-            currentPeriodNetChange -= t.amount.toNumber();
-        } else if (t.accountId === accountId && t.categoryName) {
-          // Use transaction type if available, otherwise infer from category
-          const isIncome = t.type === TransactionType.INCOME || 
-            (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
-          if (isIncome) {
-            currentPeriodNetChange -= t.amount.toNumber(); // Income decreases debt
-          } else {
-            currentPeriodNetChange += t.amount.toNumber(); // Expense increases debt
-          }
-        }
-      }
-        
-        // Initial balance = current balance - current period net change
-        invoicePreviousBalance = Math.max(0, creditCard.balance.toNumber() - currentPeriodNetChange);
-      }
-    }
-
-    // Get current period transactions
-    const invoiceCurrentPeriodTransactions = await tx.transaction.findMany({
-      where: {
-        accountId,
-        householdId: householdId!,
-        date: { gte: invoiceMonthStart, lte: invoiceMonthEnd },
-        attachmentUrl: { equals: null },
-      },
-    });
-
-    // Calculate current net expenses (expenses - income) in the invoice period
-    const invoiceCurrentNetExpenses = invoiceCurrentPeriodTransactions.reduce((sum: number, t) => {
-      if (!t.categoryName) return sum;
-      // Use transaction type if available, otherwise infer from category
-      const isIncome = t.type === TransactionType.INCOME || 
-        (t.type !== TransactionType.EXPENSE && isCategoryOfType(CategoryType.INCOME, t.categoryName));
-      if (isIncome) {
-        return sum - t.amount.toNumber(); // Income decreases debt
-      } else {
-        return sum + t.amount.toNumber(); // Expenses increase debt
-      }
-    }, 0);
-
-    // Pagamentos já realizados nesta fatura (parcial ou total) — devem ser descontados do total
-    const invoiceCurrentPayments = await tx.transaction.findMany({
-      where: {
-        householdId: householdId!,
-        attachmentUrl: technicalIdentifier,
-        date: { gte: invoiceMonthStart, lte: invoiceMonthEnd },
-      },
-    });
-    const invoiceCurrentPaymentsTotal = invoiceCurrentPayments.reduce(
-      (sum, t) => sum + t.amount.toNumber(),
-      0
-    );
-
-    // Total restante = saldo anterior + despesas líquidas do período (expenses - income) - pagamentos já feitos neste período
-    const invoiceRemaining = Math.max(
-      0,
-      invoicePreviousBalance + invoiceCurrentNetExpenses - invoiceCurrentPaymentsTotal
-    );
-
-    const invoice = {
-      total: invoiceRemaining,
-      previousBalance: invoicePreviousBalance,
-      currentExpenses: invoiceCurrentNetExpenses, // Net expenses (expenses - income)
-    };
-
-    // 4. Determine amount to pay: se amount não informado, usar o restante da fatura
-    const amountToPay = amount ?? invoice.total;
-
-    if (amountToPay <= 0) {
-      throw new BadRequestError('Payment amount must be greater than zero');
-    }
-
-    // 5. Create payment transaction in source account (EXPENSE: saída da conta para pagar a fatura)
-    const paymentTransaction = await tx.transaction.create({
-      data: {
-        householdId: householdId!,
-        type: TransactionType.EXPENSE,
-        accountId: sourceAccountId,
-        categoryName: CategoryName.OTHER_EXPENSES,
-        amount: new Prisma.Decimal(amountToPay),
-        description: description || `Pagamento de fatura - ${month}`,
-        date: new Date(),
-        paid: true,
-        attachmentUrl: technicalIdentifier,
-      },
-    });
-
-    // Structured log so the payment's technical identifier can be compared against
-    // the frontend invoice filter (CreditCards.tsx builds the same
-    // `invoice_pay:${cardId}:${year}-${zeroBasedMonth}` string). If the frontend
-    // does not surface this payment, compare `technicalIdentifier` and `paymentDate`
-    // below with the month bucket being viewed: a payment is stored with today's date,
-    // so paying an invoice in a later month lands it outside that month's bucket.
-    console.info('[payCreditCardInvoice] payment recorded', JSON.stringify({
-      householdId,
-      creditCardAccountId: accountId,
-      sourceAccountId,
-      requestedMonth: month,
-      monthKey,
-      technicalIdentifier,
-      paymentTransactionId: paymentTransaction.id,
-      paymentDate: paymentTransaction.date.toISOString(),
-      invoicePeriodStart: invoiceMonthStart.toISOString(),
-      invoicePeriodEnd: invoiceMonthEnd.toISOString(),
-      amountToPay,
-      invoiceRemainingBeforePayment: invoiceRemaining,
-    }));
-
-    // 6. Update source account balance (decrease available balance)
-    await tx.account.update({
-      where: { id: sourceAccountId },
-      data: {
-        balance: { decrement: amountToPay }, // Legacy field
-        totalBalance: { decrement: amountToPay },
-        availableBalance: { decrement: amountToPay },
-      },
-    });
-
-    // 7. Update credit card balance (decrease debt)
-    // When paying the invoice, we simply deduct the payment amount from the balance
-    // The balance already reflects all purchases (both paid and unpaid when created)
-    // When we pay, we're reducing the debt by the payment amount
-    await tx.account.update({
-      where: { id: accountId },
-      data: {
-        balance: { decrement: amountToPay }, // Legacy field
-        totalBalance: { decrement: amountToPay },
-        availableBalance: { decrement: amountToPay },
-      },
-    });
-    
-    // Recalculate credit card limit after payment
-    await recalculateCreditCardLimit(tx, accountId);
-
-    // 8. Mark credit card transactions in the month as paid
-    // Only unpaid transactions that are part of the invoice
-    await tx.transaction.updateMany({
-      where: {
-        accountId,
-        householdId: householdId!,
-        date: { gte: invoiceMonthStart, lte: invoiceMonthEnd },
-        paid: false,
-        attachmentUrl: { equals: null }, // Only purchases, not payments
-      },
-      data: {
-        paid: true,
-      },
-    });
-
-    // 9. Get updated accounts
-    const updatedCreditCard = await tx.account.findUnique({
-      where: { id: accountId },
-    });
-    const updatedSourceAccount = await tx.account.findUnique({
-      where: { id: sourceAccountId },
-    });
-
-    return {
-      paymentTransaction,
-      creditCardAccount: updatedCreditCard!,
-      sourceAccount: updatedSourceAccount!,
-      invoiceTotal: invoice.total,
-      previousBalance: invoice.previousBalance,
-      currentExpenses: invoice.currentExpenses,
-      paidAmount: amountToPay,
-    };
-  });
+export async function payCreditCardInvoice(_input: PayInvoiceInput): Promise<never> {
+  throw new InvoiceLifecycleRequiredError();
 }
 
 /**
- * Undo credit card invoice payment
+ * Legacy invoice undo is disabled; T17 exposes atomic persisted-invoice refunds.
  */
 export async function undoCreditCardPayment(
-  input: UndoPaymentParams,
-  householdId: string
-): Promise<{ creditCardAccount: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; sourceAccount: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; undoneTransaction: { id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }; }> {
-  return await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    // 1. Find the payment transaction
-    const paymentTransaction = await tx.transaction.findFirst({
-      where: {
-        id: input.transactionId,
-        householdId,
-        attachmentUrl: { not: null },
-      },
-    });
-
-    if (!paymentTransaction) {
-      throw new NotFoundError('Payment transaction');
-    }
-
-    if (!paymentTransaction.attachmentUrl?.startsWith(`invoice_pay:${input.accountId}:`)) {
-      throw new BadRequestError('Transaction is not a payment for this credit card');
-    }
-
-    // 2. Verify credit card account
-    const creditCard = await tx.account.findFirst({
-      where: { id: input.accountId, householdId, isActive: true },
-    });
-
-    if (!creditCard) {
-      throw new NotFoundError('Credit card account');
-    }
-
-    if (creditCard.type !== AccountType.CREDIT) {
-      throw new BadRequestError('Account is not a credit card');
-    }
-
-    // 3. Extract month from attachmentUrl
-    // Format: invoice_pay:accountId:YYYY-M (where M is 0-indexed, 0-11)
-    const monthMatch = paymentTransaction.attachmentUrl.match(/invoice_pay:[^:]+:(\d{4}-\d+)/);
-    if (!monthMatch) {
-      throw new BadRequestError('Invalid payment transaction format');
-    }
-
-    const monthKey = monthMatch[1];
-    const [year, monthIndex] = monthKey.split('-').map(Number);
-    
-    // Se closingDay estiver definido, usar período de fechamento; senão, usar mês completo
-    let monthStart: Date;
-    
-    if (creditCard.closingDay) {
-      const closingDay = creditCard.closingDay;
-      monthStart = new Date(year, monthIndex - 1, closingDay); // Mês anterior, dia de fechamento
-    } else {
-      // Comportamento padrão: mês completo
-      monthStart = new Date(year, monthIndex, 1);
-    }
-
-    // 4. Return amount to credit card balance (increase debt)
-    const paymentAmount = paymentTransaction.amount.toNumber();
-    await tx.account.update({
-      where: { id: input.accountId },
-      data: {
-        balance: { increment: paymentAmount }, // Legacy field
-        totalBalance: { increment: paymentAmount },
-        availableBalance: { increment: paymentAmount },
-      },
-    });
-    
-    // Recalculate credit card limit after undoing payment
-    await recalculateCreditCardLimit(tx, input.accountId);
-
-    // 5. Return amount to source account balance (increase)
-    if (!paymentTransaction.accountId) {
-      throw new BadRequestError('Payment transaction must have a source account');
-    }
-    await tx.account.update({
-      where: { id: paymentTransaction.accountId },
-      data: {
-        balance: { increment: paymentAmount }, // Legacy field
-        totalBalance: { increment: paymentAmount },
-        availableBalance: { increment: paymentAmount },
-      },
-    });
-
-    // 6. Mark transactions as unpaid (only those that were paid when this payment was made)
-    // Only transactions up to the payment date
-    await tx.transaction.updateMany({
-      where: {
-        accountId: input.accountId,
-        householdId,
-        date: {
-          gte: monthStart,
-          lte: paymentTransaction.date,
-        },
-        paid: true,
-        attachmentUrl: { equals: null }, // Only purchases, not payments
-      },
-      data: {
-        paid: false,
-      },
-    });
-
-    // 7. Delete the payment transaction
-    await tx.transaction.delete({
-      where: { id: input.transactionId },
-    });
-
-    // 8. Get updated accounts
-    const updatedCreditCard = await tx.account.findUnique({
-      where: { id: input.accountId },
-    });
-    const updatedSourceAccount = await tx.account.findUnique({
-      where: { id: paymentTransaction.accountId! },
-    });
-
-    return {
-      creditCardAccount: updatedCreditCard!,
-      sourceAccount: updatedSourceAccount!,
-      undoneTransaction: paymentTransaction,
-    };
-  });
+  _input: UndoPaymentParams,
+  _householdId: string,
+): Promise<never> {
+  throw new InvoiceLifecycleRequiredError();
 }
 
 /**

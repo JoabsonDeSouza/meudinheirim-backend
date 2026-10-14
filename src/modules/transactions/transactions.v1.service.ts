@@ -7,6 +7,7 @@ import { minorUnitsToDecimal, decimalToMinorUnits, moneyDtoSchema, type Currency
 import { createPaginatedResponse, buildPaginationArgs } from '../../shared/utils/pagination.js';
 import { isCustomCategoryName, toCustomCategoryId, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import { prisma } from '../../shared/db/prisma.js';
+import { adjustInvoiceTotal, getOrCreateInvoiceForTransaction, signedInvoiceAmount } from '../credit-cards/domain/invoice-cycle.js';
 import { appendSyncChange, findMutationReplay, payloadHash, saveMutationReceipt } from '../../shared/sync/idempotency.js';
 import { transactionV1DtoSchema, type CreateTransactionV1Input, type ListTransactionsV1Query, type TransactionV1Dto, type UpdateTransactionV1Input } from './transactions.v1.schema.js';
 
@@ -56,10 +57,10 @@ async function requireAccount(
   accountId: string,
   householdId: string,
   currency: Currency,
-): Promise<{ id: string; type: string }> {
+): Promise<{ id: string; type: string; currency: string; closingDay: number | null; dueDay: number | null }> {
   const account = await tx.account.findFirst({
     where: { id: accountId, householdId, isActive: true },
-    select: { id: true, type: true, currency: true },
+    select: { id: true, type: true, currency: true, closingDay: true, dueDay: true },
   });
   if (!account) {
     throw new NotFoundError('Account');
@@ -114,6 +115,7 @@ function toDto(row: {
   currency: string;
   categoryName: string | null;
   accountId: string | null;
+  invoiceId: string | null;
   occurredAt: Date;
   timeZone: string;
   notes: string | null;
@@ -132,6 +134,7 @@ function toDto(row: {
     amount: moneyDtoSchema.parse({ minorUnits: decimalToMinorUnits(row.amount, currency), currency }),
     categoryCode: row.categoryName,
     accountId: row.accountId,
+    invoiceId: row.invoiceId,
     occurredAt: row.occurredAt.toISOString(),
     timeZone: row.timeZone,
     note: row.notes,
@@ -164,6 +167,19 @@ export async function createTransactionV1(
     if (replay !== null) return replay;
     const account = await requireAccount(tx, input.accountId, householdId, money.currency);
     const categoryCode = await validateCategory(tx, input.categoryCode, householdId, type);
+    const invoiceId = account.type === AccountType.CREDIT
+      ? await getOrCreateInvoiceForTransaction(tx, {
+          householdId,
+          cardAccountId: account.id,
+          currency: money.currency,
+          closingDay: account.closingDay,
+          dueDay: account.dueDay,
+          occurredAt,
+          timeZone: input.timeZone,
+          amount,
+          transactionType: input.kind === 'income' ? 'INCOME' : 'EXPENSE',
+        })
+      : null;
     const transaction = await tx.transaction.create({
       data: {
         householdId,
@@ -174,6 +190,7 @@ export async function createTransactionV1(
         date: civilDate(input.occurredAt),
         occurredAt,
         timeZone: input.timeZone,
+        invoiceId,
         notes: input.note,
         paid: input.paid,
         clientMutationId: input.clientMutationId,
@@ -249,7 +266,7 @@ export async function updateTransactionV1(
     if (replay !== null) return replay;
     const existing = await tx.transaction.findFirst({
       where: { id: transactionId, householdId, deletedAt: null },
-      include: { account: { select: { id: true, type: true, currency: true } } },
+      include: { account: { select: { id: true, type: true, currency: true, closingDay: true, dueDay: true } } },
     });
     if (!existing || !existing.account) throw new NotFoundError('Transaction');
     if (existing.version !== input.expectedVersion) throw new VersionConflictError();
@@ -262,6 +279,29 @@ export async function updateTransactionV1(
       : existing.categoryName;
     if (!nextCode) throw new BadRequestError('Transaction category is missing');
     const nextPaid = input.paid ?? existing.paid;
+    let nextInvoiceId = existing.invoiceId;
+    if (existing.account.type === AccountType.CREDIT) {
+      if (existing.invoiceId) {
+        const invoice = await tx.creditCardInvoice.findUnique({
+          where: { id: existing.invoiceId },
+          select: { status: true },
+        });
+        if (invoice?.status !== 'OPEN') throw new BadRequestError('A closed invoice transaction cannot be changed');
+        await adjustInvoiceTotal(tx, existing.invoiceId, signedInvoiceAmount(existing.amount, kind === 'income' ? 'INCOME' : 'EXPENSE').negated());
+      }
+      const occurredAt = input.occurredAt ? new Date(input.occurredAt) : existing.occurredAt;
+      nextInvoiceId = await getOrCreateInvoiceForTransaction(tx, {
+        householdId,
+        cardAccountId: existing.account.id,
+        currency,
+        closingDay: existing.account.closingDay,
+        dueDay: existing.account.dueDay,
+        occurredAt,
+        timeZone: input.timeZone ?? existing.timeZone,
+        amount: nextAmount,
+        transactionType: kind === 'income' ? 'INCOME' : 'EXPENSE',
+      });
+    }
 
     if (existing.paid) {
       await applyBalanceChange(tx, existing.account.id, balanceChange(existing.amount, kind, existing.account.type).negated());
@@ -278,6 +318,7 @@ export async function updateTransactionV1(
         date: input.occurredAt ? civilDate(input.occurredAt) : undefined,
         occurredAt: input.occurredAt ? new Date(input.occurredAt) : undefined,
         timeZone: input.timeZone,
+        invoiceId: nextInvoiceId,
         notes: input.note,
         paid: nextPaid,
         version: { increment: 1 },
@@ -327,6 +368,18 @@ export async function softDeleteTransactionV1(
     if (existing.paid) {
       const kind = prismaTypeToKind(existing.type);
       await applyBalanceChange(tx, existing.account.id, balanceChange(existing.amount, kind, existing.account.type).negated());
+    }
+    if (existing.invoiceId) {
+      const invoice = await tx.creditCardInvoice.findUnique({
+        where: { id: existing.invoiceId },
+        select: { status: true },
+      });
+      if (invoice?.status !== 'OPEN') throw new BadRequestError('A closed invoice transaction cannot be deleted');
+      await adjustInvoiceTotal(
+        tx,
+        existing.invoiceId,
+        signedInvoiceAmount(existing.amount, existing.type === TransactionType.INCOME ? 'INCOME' : 'EXPENSE').negated(),
+      );
     }
     const deletedAt = new Date();
     const update = await tx.transaction.updateMany({

@@ -398,7 +398,6 @@ export async function recalculateCreditCardLimit(
       householdId: creditCard.householdId,
       paid: false,
       type: { in: [TransactionType.INCOME, TransactionType.EXPENSE] }, // Only INCOME/EXPENSE, exclude TRANSFER/ALLOCATION
-      attachmentUrl: null, // Exclude payment transactions (they have attachmentUrl)
     },
     select: {
       type: true,

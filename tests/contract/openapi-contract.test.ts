@@ -40,6 +40,8 @@ describe('versioned OpenAPI contract', () => {
     expect(document.paths['/v1/transactions/']?.post).toBeDefined();
     expect(document.paths['/v1/transactions/transfers']?.post).toBeDefined();
     expect(document.paths['/v1/sync/changes']?.get).toBeDefined();
+    expect(document.paths['/v1/credit-cards/invoices']?.get).toBeDefined();
+    expect(document.paths['/v1/credit-cards/invoices']?.get).toBeDefined();
   });
 
   it('documents public auth configuration and health/readiness routes', () => {
@@ -57,6 +59,7 @@ describe('versioned OpenAPI contract', () => {
     expect(document.components?.schemas?.TransactionV1Dto).toBeDefined();
     expect(document.components?.schemas?.TransferV1Dto).toBeDefined();
     expect(document.components?.schemas?.SyncChangeDto).toBeDefined();
+    expect(document.components?.schemas?.CreditCardInvoiceV1Dto).toBeDefined();
   });
 
   it('documents the system category-code catalogue endpoint', () => {

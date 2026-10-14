@@ -76,6 +76,7 @@ export const transactionV1DtoSchema = z.object({
   amount: moneyDtoSchema,
   categoryCode: categoryNameSchema,
   accountId: z.string().uuid(),
+  invoiceId: z.string().uuid().nullable(),
   occurredAt: z.string().datetime(),
   timeZone: timeZoneSchema,
   note: z.string().nullable(),

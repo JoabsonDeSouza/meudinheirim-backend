@@ -153,6 +153,80 @@ describe('V1 transaction CRUD and pagination', () => {
     expect(response.json().error.code).toBe('INVALID_CURSOR');
   });
 
+  it('assigns credit-card purchases to exactly one persisted billing cycle', async () => {
+    const cardResponse = await app.inject({
+      method: 'POST',
+      url: '/v1/accounts',
+      headers: { authorization: 'Bearer tx-v1-owner' },
+      payload: {
+        householdId,
+        name: 'Cycle card',
+        type: 'CREDIT',
+        currency: 'BRL',
+        creditLimit: 5000,
+        closingDay: 8,
+        dueDay: 15,
+      },
+    });
+    expect(cardResponse.statusCode).toBe(201);
+    const cardAccountId = (cardResponse.json() as { data: { id: string } }).data.id;
+
+    const purchase = await app.inject({
+      method: 'POST',
+      url: '/v1/transactions',
+      headers: { authorization: 'Bearer tx-v1-owner' },
+      payload: {
+        householdId,
+        clientMutationId: 'a0123456-789b-4cde-8f01-23456789abcd',
+        kind: 'expense',
+        amount: { minorUnits: 1000, currency: 'BRL' },
+        categoryCode: 'FOOD',
+        accountId: cardAccountId,
+        occurredAt: '2026-10-09T12:34:56.000Z',
+        timeZone: 'America/Sao_Paulo',
+        paid: true,
+      },
+    });
+    expect(purchase.statusCode).toBe(201);
+    const firstPurchase = purchase.json() as { id: string; invoiceId: string | null };
+    expect(firstPurchase.invoiceId).toBeTruthy();
+
+    const secondPurchase = await app.inject({
+      method: 'POST',
+      url: '/v1/transactions',
+      headers: { authorization: 'Bearer tx-v1-owner' },
+      payload: {
+        householdId,
+        clientMutationId: 'b1234567-89ab-4cde-8f01-23456789abcd',
+        kind: 'expense',
+        amount: { minorUnits: 2000, currency: 'BRL' },
+        categoryCode: 'FOOD',
+        accountId: cardAccountId,
+        occurredAt: '2026-10-10T15:34:56.000Z',
+        timeZone: 'America/Sao_Paulo',
+        paid: true,
+      },
+    });
+    expect(secondPurchase.statusCode).toBe(201);
+    expect((secondPurchase.json() as { invoiceId: string }).invoiceId).toBe(firstPurchase.invoiceId);
+
+    const invoices = await app.inject({
+      method: 'GET',
+      url: `/v1/credit-cards/invoices?householdId=${householdId}&cardAccountId=${cardAccountId}`,
+      headers: { authorization: 'Bearer tx-v1-owner' },
+    });
+    expect(invoices.statusCode).toBe(200);
+    const items = (invoices.json() as { items: Array<{ id: string; periodStart: string; periodEnd: string; dueDate: string; totalAmount: { minorUnits: number; currency: string } }> }).items;
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      id: firstPurchase.invoiceId,
+      periodStart: '2026-10-08',
+      periodEnd: '2026-11-08',
+      dueDate: '2026-11-15',
+      totalAmount: { minorUnits: 3000, currency: 'BRL' },
+    });
+  });
+
   it('updates and soft-deletes a transaction', async () => {
     const listed = await app.inject({
       method: 'GET',
@@ -216,7 +290,7 @@ describe('V1 transaction CRUD and pagination', () => {
     expect((deleteReplay.json() as { deletedAt: string | null }).deletedAt).toBeTruthy();
     const afterDelete = await app.inject({
       method: 'GET',
-      url: `/v1/transactions?householdId=${householdId}`,
+      url: `/v1/transactions?householdId=${householdId}&accountId=${accountId}`,
       headers: { authorization: 'Bearer tx-v1-owner' },
     });
     expect((afterDelete.json() as { items: unknown[] }).items).toHaveLength(0);

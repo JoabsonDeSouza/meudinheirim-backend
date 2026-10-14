@@ -9,6 +9,8 @@ import { isCategoryOfType, CategoryType, AccountType, TransactionType } from '..
 import { isCustomCategoryName, toCustomCategoryId } from '../../shared/utils/categoryHelpers.js';
 import { updateBalanceForNormalTransaction, recalculateCreditCardLimit } from '../../shared/services/balance.service.js';
 import { calculateNextRunDate } from './recurrence-date.js';
+import { currencySchema } from '../../shared/money/index.js';
+import { getOrCreateInvoiceForTransaction } from '../credit-cards/domain/invoice-cycle.js';
 import type {
   CreateRecurringTransactionInput,
   UpdateRecurringTransactionInput,
@@ -410,6 +412,20 @@ export async function executeRecurringTransaction(
       }
     }
 
+    const invoiceId = recurring.account.type === AccountType.CREDIT
+      ? await getOrCreateInvoiceForTransaction(tx, {
+          householdId: recurring.account.householdId,
+          cardAccountId: recurring.account.id,
+          currency: currencySchema.parse(recurring.account.currency),
+          closingDay: recurring.account.closingDay,
+          dueDay: recurring.account.dueDay,
+          occurredAt: transactionDate,
+          timeZone: recurring.timeZone,
+          amount: recurring.amount,
+          transactionType: transactionType === TransactionType.INCOME ? 'INCOME' : 'EXPENSE',
+        })
+      : null;
+
     // Create transaction
     const transaction = await tx.transaction.create({
       data: {
@@ -422,6 +438,7 @@ export async function executeRecurringTransaction(
         date: transactionDate,
         occurredAt: transactionDate,
         timeZone: recurring.timeZone,
+        invoiceId,
         notes: `Auto-generated from recurring transaction: ${recurring.id} on ${new Date().toISOString()}`,
         paid: isPaid,
         recurringTransactionId: recurring.id,

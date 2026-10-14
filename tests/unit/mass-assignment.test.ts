@@ -34,6 +34,19 @@ describe('updateUserPreferencesSchema (mass assignment protection)', () => {
     expect(transaction.success).toBe(false);
   });
 
+  it('rejects attachmentUrl as an inactive upload/metadata surface', () => {
+    const result = createTransactionSchema.safeParse({
+      householdId: '8d2f412d-1b0c-4e97-b4d7-53b5c45a7d4f',
+      type: 'EXPENSE',
+      accountId: '8d2f412d-1b0c-4e97-b4d7-53b5c45a7d4f',
+      categoryName: 'FOOD',
+      amount: 100,
+      date: '2026-10-14',
+      attachmentUrl: 'invoice_pay:5a7cde52-ae08-4ce0-92a4-c6a87127e130:2026-9',
+    });
+    expect(result.success).toBe(false);
+  });
+
   it('rejects server-owned recurrence job state', () => {
     expect(
       updateUserPreferencesSchema.safeParse({ lastRecurringProcessedMonth: '2026-01' }).success,

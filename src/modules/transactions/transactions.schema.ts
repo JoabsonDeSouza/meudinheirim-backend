@@ -43,7 +43,6 @@ export const createTransactionSchema = z.object({
   installmentId: z.string().optional(),
   installmentNumber: z.number().int().positive().optional(),
   totalInstallments: z.number().int().positive().optional(),
-  attachmentUrl: z.string().max(500).optional(), // Pode ser URL ou identificador técnico (ex: invoice_pay:xxx:xxx)
   // Split expense fields (only for EXPENSE transactions in shared households)
   isSplit: z.boolean().optional().default(false),
   splits: z.array(transactionSplitInputSchema).optional(), // Array of splits when isSplit is true
@@ -118,7 +117,6 @@ export const updateTransactionSchema = z.object({
   installmentId: z.string().nullable().optional(),
   installmentNumber: z.number().int().positive().nullable().optional(),
   totalInstallments: z.number().int().positive().nullable().optional(),
-  attachmentUrl: z.string().max(500).nullable().optional(), // Pode ser URL ou identificador técnico (ex: invoice_pay:xxx:xxx)
 }).strict();
 
 export type UpdateTransactionInput = z.infer<typeof updateTransactionSchema>;
@@ -303,5 +301,4 @@ export const heatmapQuerySchema = z.object({
 }).strict();
 
 export type HeatmapQuery = z.infer<typeof heatmapQuerySchema>;
-
 

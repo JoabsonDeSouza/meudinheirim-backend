@@ -34,6 +34,7 @@ import { recurringV1Routes } from './modules/recurring-transactions/recurring.v1
 import { feedbackRoutes } from './modules/feedback/index.js';
 import { notificationRoutes } from './modules/notifications/index.js';
 import { dashboardRoutes } from './modules/dashboard/index.js';
+import { creditCardInvoiceV1Routes } from './modules/credit-cards/invoices.v1.routes.js';
 
 /**
  * Build the Fastify application
@@ -190,13 +191,14 @@ export async function buildApp(): Promise<FastifyInstance> {
           },
           TransactionV1Dto: {
             type: 'object',
-            required: ['id', 'kind', 'amount', 'categoryCode', 'accountId', 'occurredAt', 'timeZone', 'note', 'paid', 'createdAt', 'updatedAt', 'deletedAt', 'version', 'clientMutationId'],
+            required: ['id', 'kind', 'amount', 'categoryCode', 'accountId', 'invoiceId', 'occurredAt', 'timeZone', 'note', 'paid', 'createdAt', 'updatedAt', 'deletedAt', 'version', 'clientMutationId'],
             properties: {
               id: { type: 'string', format: 'uuid' },
               kind: { type: 'string', enum: ['expense', 'income'] },
               amount: { $ref: '#/components/schemas/MoneyDto' },
               categoryCode: { type: 'string' },
               accountId: { type: 'string', format: 'uuid' },
+              invoiceId: { type: ['string', 'null'], format: 'uuid' },
               occurredAt: { type: 'string', format: 'date-time' },
               timeZone: { type: 'string' },
               note: { type: ['string', 'null'] },
@@ -249,6 +251,23 @@ export async function buildApp(): Promise<FastifyInstance> {
             },
             additionalProperties: false,
           },
+          CreditCardInvoiceV1Dto: {
+            type: 'object',
+            required: ['id', 'householdId', 'cardAccountId', 'periodStart', 'periodEnd', 'dueDate', 'status', 'totalAmount', 'closedAt', 'paidAt'],
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              householdId: { type: 'string', format: 'uuid' },
+              cardAccountId: { type: 'string', format: 'uuid' },
+              periodStart: { type: 'string', format: 'date' },
+              periodEnd: { type: 'string', format: 'date' },
+              dueDate: { type: 'string', format: 'date' },
+              status: { type: 'string', enum: ['OPEN', 'CLOSED', 'PAID'] },
+              totalAmount: { $ref: '#/components/schemas/MoneyDto' },
+              closedAt: { type: ['string', 'null'], format: 'date-time' },
+              paidAt: { type: ['string', 'null'], format: 'date-time' },
+            },
+            additionalProperties: false,
+          },
           ApiErrorDto: {
             type: 'object',
             required: ['success', 'error'],
@@ -289,6 +308,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         { name: 'Accounts', description: 'Account management endpoints' },
         { name: 'Categories', description: 'Transaction category endpoints' },
         { name: 'Transactions', description: 'Transaction management endpoints' },
+        { name: 'Credit Cards', description: 'Persisted billing cycles and invoices' },
         { name: 'Budgets', description: 'Budget management endpoints' },
         { name: 'Savings Goals', description: 'Savings goal endpoints' },
         { name: 'Recurring Transactions', description: 'Recurring transaction endpoints' },
@@ -433,6 +453,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(transactionRoutes, { prefix: '/transactions' });
   await app.register(transactionV1Routes, { prefix: '/v1/transactions' });
   await app.register(syncRoutes, { prefix: '/v1/sync' });
+  await app.register(creditCardInvoiceV1Routes, { prefix: '/v1/credit-cards' });
   await app.register(budgetRoutes, { prefix: '/budgets' });
   await app.register(budgetV1Routes, { prefix: '/v1/budgets' });
   await app.register(savingsGoalRoutes, { prefix: '/savings-goals' });

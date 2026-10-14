@@ -593,7 +593,7 @@ export async function transactionRoutes(app: FastifyInstance): Promise<void> {
         },
       },
     },
-    async (request, reply) => {
+    async (request, _reply) => {
       const params = creditCardInvoiceParamsSchema.parse(request.params);
       const query = creditCardInvoiceQuerySchema.parse(request.query ?? {});
       
@@ -602,7 +602,7 @@ export async function transactionRoutes(app: FastifyInstance): Promise<void> {
       
       await requireHouseholdMember(request, householdId);
 
-      const invoice = await transactionsService.calculateCreditCardInvoice(
+      return await transactionsService.calculateCreditCardInvoice(
         params.accountId,
         params.month,
         householdId,
@@ -611,12 +611,6 @@ export async function transactionRoutes(app: FastifyInstance): Promise<void> {
           cursor: query.cursor,
         }
       );
-
-      return reply.send({
-        success: true,
-        data: invoice.data,
-        pagination: invoice.pagination,
-      });
     }
   );
 
@@ -996,9 +990,5 @@ export async function transactionRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 }
-
-
-
-
 
 

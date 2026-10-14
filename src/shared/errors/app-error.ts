@@ -128,6 +128,12 @@ export class IdempotencyConflictError extends AppError {
   }
 }
 
+export class InvoiceLifecycleRequiredError extends AppError {
+  constructor() {
+    super('Invoice actions require the persisted invoice lifecycle API', 410, 'INVOICE_LIFECYCLE_REQUIRED');
+  }
+}
+
 // ============================================================================
 // RATE LIMIT ERRORS (429)
 // ============================================================================
@@ -137,6 +143,5 @@ export class RateLimitError extends AppError {
     super(message, 429, 'RATE_LIMIT_EXCEEDED');
   }
 }
-
 
 

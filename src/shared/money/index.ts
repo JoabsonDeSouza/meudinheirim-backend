@@ -14,6 +14,8 @@ export const moneyDtoSchema = z.object({
   currency: z.enum(supportedCurrencies),
 }).strict();
 
+export const currencySchema = z.enum(supportedCurrencies);
+
 export function parseMoneyDto(value: unknown): MoneyDto {
   return moneyDtoSchema.parse(value);
 }
