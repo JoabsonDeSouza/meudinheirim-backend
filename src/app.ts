@@ -34,6 +34,7 @@ import { recurringV1Routes } from './modules/recurring-transactions/recurring.v1
 import { feedbackRoutes } from './modules/feedback/index.js';
 import { notificationRoutes } from './modules/notifications/index.js';
 import { dashboardRoutes } from './modules/dashboard/index.js';
+import { dashboardV1Routes } from './modules/dashboard/dashboard.v1.routes.js';
 import { creditCardInvoiceV1Routes } from './modules/credit-cards/invoices.v1.routes.js';
 
 /**
@@ -465,7 +466,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(notificationRoutes, { prefix: '/notifications' });
   await app.register(notificationRoutes, { prefix: '/v1/notifications' });
   await app.register(dashboardRoutes, { prefix: '/dashboard' });
-  await app.register(dashboardRoutes, { prefix: '/v1/dashboard' });
+  await app.register(dashboardV1Routes, { prefix: '/v1/dashboard' });
 
   return app;
 }
