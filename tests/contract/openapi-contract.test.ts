@@ -50,6 +50,8 @@ describe('versioned OpenAPI contract', () => {
   it('publishes the shared typed error envelope schema', () => {
     const document = app.swagger() as OpenApiDocument;
     expect(document.components?.schemas?.ApiErrorDto).toBeDefined();
+    expect(document.components?.schemas?.MoneyDto).toBeDefined();
+    expect(document.components?.schemas?.TransactionV1Dto).toBeDefined();
   });
 
   it('documents the system category-code catalogue endpoint', () => {

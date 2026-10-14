@@ -265,6 +265,9 @@ model Transaction {
   accountId              String?         @map("account_id") @db.Uuid // Para INCOME/EXPENSE
   categoryName           String?         @map("category_name") @db.VarChar(50) // Nullable para TRANSFER/ALLOCATION
   amount                 Decimal         @db.Decimal(15, 2)
+  occurredAt             DateTime        @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  timeZone               String          @default("UTC") @map("time_zone") @db.VarChar(64)
+  deletedAt              DateTime?       @map("deleted_at") @db.Timestamptz(3)
   description            String?
   date                   DateTime        @db.Date
   notes                  String?

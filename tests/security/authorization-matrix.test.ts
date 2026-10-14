@@ -167,6 +167,25 @@ describe('authorization matrix (accounts/financial surfaces)', () => {
     expect(create.statusCode).toBe(403);
   });
 
+  it('viewer cannot create a transaction through the V1 MoneyDto endpoint', async () => {
+    const accountId = ownAccountPath.split('/').at(-1);
+    const create = await app.inject({
+      method: 'POST',
+      url: '/v1/transactions',
+      headers: authHeaders('sec-viewer'),
+      payload: {
+        householdId: ownerHouseholdId,
+        kind: 'expense',
+        amount: { minorUnits: 100, currency: 'BRL' },
+        categoryCode: 'FOOD',
+        accountId,
+        occurredAt: '2026-10-13T12:34:56.000Z',
+        timeZone: 'America/Sao_Paulo',
+      },
+    });
+    expect(create.statusCode).toBe(403);
+  });
+
   it('preferences endpoint rejects isPremium mass assignment', async () => {
     const response = await app.inject({
       method: 'PUT',

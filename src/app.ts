@@ -24,6 +24,7 @@ import { accountRoutes } from './modules/accounts/index.js';
 import { categoryRoutes } from './modules/categories/index.js';
 import { categoryV1Routes } from './modules/categories/categories.v1.routes.js';
 import { transactionRoutes } from './modules/transactions/index.js';
+import { transactionV1Routes } from './modules/transactions/transactions.v1.routes.js';
 import { budgetRoutes } from './modules/budgets/index.js';
 import { savingsGoalRoutes } from './modules/savings-goals/index.js';
 import { recurringTransactionRoutes } from './modules/recurring-transactions/index.js';
@@ -175,6 +176,34 @@ export async function buildApp(): Promise<FastifyInstance> {
       ],
       components: {
         schemas: {
+          MoneyDto: {
+            type: 'object',
+            required: ['minorUnits', 'currency'],
+            properties: {
+              minorUnits: { type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+              currency: { type: 'string', enum: ['BRL', 'USD'] },
+            },
+            additionalProperties: false,
+          },
+          TransactionV1Dto: {
+            type: 'object',
+            required: ['id', 'kind', 'amount', 'categoryCode', 'accountId', 'occurredAt', 'timeZone', 'note', 'paid', 'createdAt', 'updatedAt', 'deletedAt'],
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              kind: { type: 'string', enum: ['expense', 'income'] },
+              amount: { $ref: '#/components/schemas/MoneyDto' },
+              categoryCode: { type: 'string' },
+              accountId: { type: 'string', format: 'uuid' },
+              occurredAt: { type: 'string', format: 'date-time' },
+              timeZone: { type: 'string' },
+              note: { type: ['string', 'null'] },
+              paid: { type: 'boolean' },
+              createdAt: { type: 'string', format: 'date-time' },
+              updatedAt: { type: 'string', format: 'date-time' },
+              deletedAt: { type: ['string', 'null'], format: 'date-time' },
+            },
+            additionalProperties: false,
+          },
           ApiErrorDto: {
             type: 'object',
             required: ['success', 'error'],
@@ -356,7 +385,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(categoryRoutes, { prefix: '/categories' });
   await app.register(categoryV1Routes, { prefix: '/v1/categories' });
   await app.register(transactionRoutes, { prefix: '/transactions' });
-  await app.register(transactionRoutes, { prefix: '/v1/transactions' });
+  await app.register(transactionV1Routes, { prefix: '/v1/transactions' });
   await app.register(budgetRoutes, { prefix: '/budgets' });
   await app.register(budgetRoutes, { prefix: '/v1/budgets' });
   await app.register(savingsGoalRoutes, { prefix: '/savings-goals' });
