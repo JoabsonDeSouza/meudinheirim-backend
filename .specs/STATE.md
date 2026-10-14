@@ -1,6 +1,6 @@
 # Recta Backend Adaptation — Execution State
 
-Updated: 2026-10-13 23:30 (local) · Spec source: `/Volumes/Joabson/Files/ProgramaDev/Project/meudinherim/docs/superpowers/plans/2026-10-13-recta-backend-adaptation.md`
+Updated: 2026-10-14 (local) · Spec source: `/Volumes/Joabson/Files/ProgramaDev/Project/meudinherim/docs/superpowers/plans/2026-10-13-recta-backend-adaptation.md`
 
 ## Decisions
 
@@ -34,11 +34,12 @@ All tasks run on the backend worktree/branch above unless a later entry names th
 | T14 · 2026-10-14 | Mutation receipts/payload hashes, entity versions, `SyncChange` monotonic feed, tombstones, migration backfill, `/v1/sync/changes` | `test:unit` 57; `test:integration` 29; `test:contract` 4; `test:security` 12; `test:migrations` 4; `db:deploy:test` applied on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `44f53b2` | Legacy unversioned writes remain outside the V1 change feed during compatibility period |
 | T15 · 2026-10-14 | Budget currency and V1 MoneyDto routes, recurring V1 MoneyDto/timezone routes, occurrence marker table/lock, UTC civil recurrence calculation, exact Decimal balance/recalculation | `test:unit` 61; `test:integration` 32; `test:contract` 4; `test:security` 13; `test:migrations` 6; `db:deploy:test` no pending migration on disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `6d79a9f` | Legacy unversioned budget/recurring endpoints retain numeric DTOs; V1 endpoints and cron occurrence path use currency-aware Money/Decimal |
 | T16 · 2026-10-14 | Invoice/cycle/payment/migration-issue models, card-cycle assignment for V1 and recurring purchases, legacy marker conversion/quarantine, v1 invoice list, legacy payment route deprecation | `test:unit` 69; `test:integration` 33; `test:contract` 4; `test:security` 13; `test:migrations` 7; `db:deploy:test` applied to disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `2d2e46a` | Legacy v0 invoice summary/payment/undo endpoints now return `410` pending T17 V1 lifecycle; unrecognized attachment values are quarantined in `invoice_migration_issues` |
+| T17 · 2026-10-14 | Invoice lifecycle state machine and close/pay/refund routes; invoice/account advisory locks, optimistic versions, mutation replay, transaction/payment/refund records, account balance reconciliation, sync feed updates, additive invoice version/refund relation migration | `test:unit` 71; `test:integration` 39 (including close/pay/refund, replay, concurrency, rollback, authorization, currency); `test:contract` 4; `test:security` 13; `test:migrations` 7; `db:deploy:test` applied 26 migrations to disposable `recta_baseline` | lint/typecheck/forbidden typing/build/diff-check pass | `ba611f5` | None |
 
 ## Handoff
 
-- Current task: T16 complete; ledger records commit `2d2e46a`.
-- Last committed backend SHA: `2d2e46a`.
-- Current uncommitted changes: this post-commit evidence update.
-- Next action: begin T17 (atomic close/pay/refund invoice lifecycle) in plan order.
+- Current task: T17 complete; implementation commit `ba611f5`.
+- Last committed backend SHA: `ba611f5`.
+- Current uncommitted changes: T17 post-commit evidence update.
+- Next action: commit this evidence, then begin T18 dashboard and latest-transactions work in plan order.
 - No push, PR, deploy, remote database access, or production configuration changes have occurred.
