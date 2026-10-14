@@ -16,11 +16,11 @@ export function errorHandler(
   if (error.name === 'SyntaxError' && error.message.includes('JSON')) {
     reply.status(400).send({
       success: false,
-      error: { code: 'BAD_REQUEST', message: 'Invalid JSON in request body' },
+      error: { code: 'BAD_REQUEST', message: 'Invalid JSON in request body', requestId: request.id },
     });
     return;
   }
 
-  const result = toPublicErrorResult(error);
+  const result = toPublicErrorResult(error, request.id);
   reply.status(result.statusCode).send(result.body);
 }

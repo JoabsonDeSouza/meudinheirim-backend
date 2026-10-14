@@ -6,7 +6,8 @@ export interface PublicErrorResponse {
   readonly error: {
     readonly code: string;
     readonly message: string;
-    readonly details?: Record<string, string[]>;
+    readonly requestId: string;
+    readonly fieldErrors?: Record<string, string[]>;
   };
 }
 
@@ -15,17 +16,21 @@ export interface PublicErrorResult {
   readonly body: PublicErrorResponse;
 }
 
-export function toPublicError(error: unknown): PublicErrorResponse {
-  return toPublicErrorResult(error).body;
+export function toPublicError(error: unknown, requestId = 'unknown'): PublicErrorResponse {
+  const result = toPublicErrorResult(error);
+  return {
+    ...result.body,
+    error: { ...result.body.error, requestId },
+  };
 }
 
-export function toPublicErrorResult(error: unknown): PublicErrorResult {
+export function toPublicErrorResult(error: unknown, requestId = 'unknown'): PublicErrorResult {
   if (error instanceof ZodError) {
     return {
       statusCode: 400,
       body: {
         success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'Validation failed' },
+        error: { code: 'VALIDATION_ERROR', message: 'Validation failed', requestId },
       },
     };
   }
@@ -38,7 +43,8 @@ export function toPublicErrorResult(error: unknown): PublicErrorResult {
         error: {
           code: error.code,
           message: error.message,
-          ...(error instanceof ValidationError ? { details: error.details } : {}),
+          requestId,
+          ...(error instanceof ValidationError ? { fieldErrors: error.details } : {}),
         },
       },
     };
@@ -49,7 +55,7 @@ export function toPublicErrorResult(error: unknown): PublicErrorResult {
       statusCode: 400,
       body: {
         success: false,
-        error: { code: 'VALIDATION_ERROR', message: 'Validation failed' },
+        error: { code: 'VALIDATION_ERROR', message: 'Validation failed', requestId },
       },
     };
   }
@@ -61,7 +67,7 @@ export function toPublicErrorResult(error: unknown): PublicErrorResult {
         statusCode,
         body: {
           success: false,
-          error: { code: 'REQUEST_REJECTED', message: 'Request could not be processed' },
+          error: { code: 'REQUEST_REJECTED', message: 'Request could not be processed', requestId },
         },
       };
     }
@@ -71,7 +77,7 @@ export function toPublicErrorResult(error: unknown): PublicErrorResult {
     statusCode: 500,
     body: {
       success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' },
+      error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred', requestId },
     },
   };
 }

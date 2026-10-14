@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 import { createTestApp } from '../helpers/app.js';
+import { apiErrorSchema } from '../../src/shared/contracts/index.js';
 import { disposeBootstrapTestDb, getBootstrapTestDb } from '../helpers/db-context.js';
 
 let app: FastifyInstance;
@@ -41,6 +42,16 @@ describe('health and readiness endpoints', () => {
       payload: `{"padding":"${'x'.repeat(270_000)}"}`,
     });
     expect(response.statusCode).toBe(413);
+  });
+
+  it('includes requestId and stable public code in API errors', async () => {
+    const response = await app.inject({ method: 'GET', url: '/v1/auth/me' });
+    expect(response.statusCode).toBe(401);
+    const body: unknown = response.json();
+    expect(apiErrorSchema.safeParse(body).success).toBe(true);
+    const parsed = apiErrorSchema.parse(body);
+    expect(parsed.error.code).toBe('UNAUTHORIZED');
+    expect(parsed.error.requestId).toBeTruthy();
   });
 
   it('enforces the configured request rate limit', async () => {

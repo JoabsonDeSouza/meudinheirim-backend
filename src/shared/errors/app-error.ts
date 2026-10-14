@@ -93,6 +93,12 @@ export class BadRequestError extends AppError {
   }
 }
 
+export class InvalidCursorError extends AppError {
+  constructor() {
+    super('Invalid pagination cursor', 400, 'INVALID_CURSOR');
+  }
+}
+
 /** 400: category is referenced by transactions, budgets or recurring (use code CATEGORY_IN_USE for i18n) */
 export class CategoryInUseError extends AppError {
   constructor(message: string = 'Category is in use') {
@@ -119,7 +125,6 @@ export class RateLimitError extends AppError {
     super(message, 429, 'RATE_LIMIT_EXCEEDED');
   }
 }
-
 
 
 

@@ -695,7 +695,7 @@ export async function listTransactions(query: ListTransactionsQuery): Promise<Pa
         select: { id: true, name: true, type: true },
       },
     },
-    orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+    orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
   });
 
   // Get total count for the filters
@@ -2655,4 +2655,3 @@ export async function createDeallocation(input: {
     amount: result.amount.toNumber(),
   };
 }
-

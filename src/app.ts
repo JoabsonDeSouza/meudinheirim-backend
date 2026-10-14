@@ -145,6 +145,25 @@ export async function buildApp(): Promise<FastifyInstance> {
         description: 'Personal finance backend with household collaboration support',
         version: '1.0.0',
       },
+      paths: {
+        '/health': {
+          get: {
+            tags: ['Health'],
+            summary: 'Liveness probe',
+            responses: { '200': { description: 'Process is alive' } },
+          },
+        },
+        '/ready': {
+          get: {
+            tags: ['Health'],
+            summary: 'Readiness probe',
+            responses: {
+              '200': { description: 'Dependencies are ready' },
+              '503': { description: 'One or more dependencies are not ready' },
+            },
+          },
+        },
+      },
       servers: [
         {
           url: isProduction
@@ -154,6 +173,30 @@ export async function buildApp(): Promise<FastifyInstance> {
         },
       ],
       components: {
+        schemas: {
+          ApiErrorDto: {
+            type: 'object',
+            required: ['success', 'error'],
+            properties: {
+              success: { type: 'boolean', enum: [false] },
+              error: {
+                type: 'object',
+                required: ['code', 'message', 'requestId'],
+                properties: {
+                  code: { type: 'string' },
+                  message: { type: 'string' },
+                  requestId: { type: 'string' },
+                  fieldErrors: {
+                    type: 'object',
+                    additionalProperties: { type: 'array', items: { type: 'string' } },
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+            additionalProperties: false,
+          },
+        },
         securitySchemes: {
           bearerAuth: {
             type: 'http',
@@ -300,18 +343,31 @@ export async function buildApp(): Promise<FastifyInstance> {
   // ============================================================================
 
   await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(authConfigRoutes, { prefix: '/auth' });
+  await app.register(authRoutes, { prefix: '/v1/auth' });
   await app.register(authConfigRoutes, { prefix: '/v1/auth' });
   await app.register(userRoutes, { prefix: '/users' });
+  await app.register(userRoutes, { prefix: '/v1/users' });
   await app.register(householdRoutes, { prefix: '/households' });
+  await app.register(householdRoutes, { prefix: '/v1/households' });
   await app.register(accountRoutes, { prefix: '/accounts' });
+  await app.register(accountRoutes, { prefix: '/v1/accounts' });
   await app.register(categoryRoutes, { prefix: '/categories' });
+  await app.register(categoryRoutes, { prefix: '/v1/categories' });
   await app.register(transactionRoutes, { prefix: '/transactions' });
+  await app.register(transactionRoutes, { prefix: '/v1/transactions' });
   await app.register(budgetRoutes, { prefix: '/budgets' });
+  await app.register(budgetRoutes, { prefix: '/v1/budgets' });
   await app.register(savingsGoalRoutes, { prefix: '/savings-goals' });
+  await app.register(savingsGoalRoutes, { prefix: '/v1/savings-goals' });
   await app.register(recurringTransactionRoutes, { prefix: '/recurring-transactions' });
+  await app.register(recurringTransactionRoutes, { prefix: '/v1/recurring-transactions' });
   await app.register(feedbackRoutes, { prefix: '/feedback' });
+  await app.register(feedbackRoutes, { prefix: '/v1/feedback' });
   await app.register(notificationRoutes, { prefix: '/notifications' });
+  await app.register(notificationRoutes, { prefix: '/v1/notifications' });
   await app.register(dashboardRoutes, { prefix: '/dashboard' });
+  await app.register(dashboardRoutes, { prefix: '/v1/dashboard' });
 
   return app;
 }

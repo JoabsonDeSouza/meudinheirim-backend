@@ -57,9 +57,21 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           401: {
             type: 'object',
             properties: {
-              success: { type: 'boolean' },
-              error: { type: 'string' },
+              success: { type: 'boolean', enum: [false] },
+              error: {
+                type: 'object',
+                required: ['code', 'message', 'requestId'],
+                properties: {
+                  code: { type: 'string' },
+                  message: { type: 'string' },
+                  requestId: { type: 'string' },
+                  fieldErrors: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+                },
+                additionalProperties: false,
+              },
             },
+            required: ['success', 'error'],
+            additionalProperties: false,
           },
         },
       },
@@ -126,9 +138,21 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           401: {
             type: 'object',
             properties: {
-              success: { type: 'boolean' },
-              error: { type: 'string' },
+              success: { type: 'boolean', enum: [false] },
+              error: {
+                type: 'object',
+                required: ['code', 'message', 'requestId'],
+                properties: {
+                  code: { type: 'string' },
+                  message: { type: 'string' },
+                  requestId: { type: 'string' },
+                  fieldErrors: { type: 'object', additionalProperties: { type: 'array', items: { type: 'string' } } },
+                },
+                additionalProperties: false,
+              },
             },
+            required: ['success', 'error'],
+            additionalProperties: false,
           },
         },
       },
@@ -197,7 +221,6 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 }
-
 
 
 

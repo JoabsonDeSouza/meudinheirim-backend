@@ -42,7 +42,7 @@ describe('public errors', () => {
     });
     expect(response).toEqual({
       success: false,
-      error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred' },
+      error: { code: 'INTERNAL_ERROR', message: 'An unexpected error occurred', requestId: 'unknown' },
     });
     expect(JSON.stringify(response).includes('stack')).toBe(false);
     expect(JSON.stringify(response).includes('customer account data')).toBe(false);
