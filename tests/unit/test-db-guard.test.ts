@@ -6,7 +6,7 @@ describe('disposable test database guard', () => {
   it('rejects a URL pointing at a production host', () => {
     expect(() =>
       assertDisposableTestDatabaseUrl(
-        'postgresql://u:p@db.railway.internal:5432/recta_test_1',
+        'postgresql://u:p@db.railway.internal:5432/meudinheirim_test_1',
       ),
     ).toThrow(/not a disposable test database/i);
   });
@@ -14,16 +14,24 @@ describe('disposable test database guard', () => {
   it('rejects a URL containing "prod" in the database name', () => {
     expect(() =>
       assertDisposableTestDatabaseUrl(
-        'postgresql://u:p@127.0.0.1:55455/recta_prod',
+        'postgresql://u:p@127.0.0.1:55455/meudinheirim_prod',
       ),
     ).toThrow(/not a disposable test database/i);
   });
 
-  it('accepts a loopback disposable URL whose database name starts with recta_', () => {
+  it('accepts a loopback disposable URL whose database name starts with meudinheirim_', () => {
     expect(() =>
       assertDisposableTestDatabaseUrl(
-        'postgresql://postgres:disposable@127.0.0.1:55455/recta_test_abc',
+        'postgresql://postgres:disposable@127.0.0.1:55455/meudinheirim_test_abc',
       ),
     ).not.toThrow();
+  });
+
+  it('rejects a loopback disposable URL using a non-project prefix', () => {
+    expect(() =>
+      assertDisposableTestDatabaseUrl(
+        'postgresql://postgres:disposable@127.0.0.1:55455/legacy_test_abc',
+      ),
+    ).toThrow(/not a disposable test database/i);
   });
 });

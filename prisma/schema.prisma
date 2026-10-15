@@ -1,4 +1,4 @@
-// Prisma schema for Recta - Personal Finance Backend
+// Prisma schema for Meudinheirim - Personal Finance Backend
 // Designed for PostgreSQL with explicit authorization model
 
 generator client {

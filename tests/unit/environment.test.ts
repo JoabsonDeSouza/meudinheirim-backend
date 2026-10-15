@@ -9,13 +9,13 @@ describe('parseEnvironment', () => {
   });
 
   it('rejects an invalid NODE_ENV', () => {
-    const result = parseEnvironment({ DATABASE_URL: 'postgresql://u:p@localhost:5432/recta_x', NODE_ENV: 'staging' });
+    const result = parseEnvironment({ DATABASE_URL: 'postgresql://u:p@localhost:5432/meudinheirim_x', NODE_ENV: 'staging' });
     expect(result.success).toBe(false);
   });
 
   it('accepts a minimal test environment with defaults', () => {
     const result = parseEnvironment({
-      DATABASE_URL: 'postgresql://u:p@localhost:5432/recta_x',
+      DATABASE_URL: 'postgresql://u:p@localhost:5432/meudinheirim_x',
       NODE_ENV: 'test',
     });
     expect(result.success).toBe(true);
@@ -23,7 +23,7 @@ describe('parseEnvironment', () => {
 
   it('rejects production without Firebase credentials', () => {
     const result = parseEnvironment({
-      DATABASE_URL: 'postgresql://u:p@localhost:5432/recta_x',
+      DATABASE_URL: 'postgresql://u:p@localhost:5432/meudinheirim_x',
       NODE_ENV: 'production',
     });
     expect(result.success).toBe(false);
@@ -34,7 +34,7 @@ describe('parseEnvironment', () => {
 
   it('accepts production with all individual Firebase credentials', () => {
     const result = parseEnvironment({
-      DATABASE_URL: 'postgresql://u:p@localhost:5432/recta_x',
+      DATABASE_URL: 'postgresql://u:p@localhost:5432/meudinheirim_x',
       NODE_ENV: 'production',
       FIREBASE_PROJECT_ID: 'project',
       FIREBASE_CLIENT_EMAIL: 'svc@project.iam.gserviceaccount.com',
@@ -45,7 +45,7 @@ describe('parseEnvironment', () => {
 
   it('rejects that the parsed config exposes no private values on the public auth config surface', () => {
     const result = parseEnvironment({
-      DATABASE_URL: 'postgresql://u:p@localhost:5432/recta_x',
+      DATABASE_URL: 'postgresql://u:p@localhost:5432/meudinheirim_x',
       NODE_ENV: 'test',
       FIREBASE_PROJECT_ID: 'project',
       FIREBASE_CLIENT_EMAIL: 'svc@project.iam.gserviceaccount.com',

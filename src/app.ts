@@ -149,7 +149,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     openapi: {
       openapi: '3.0.0',
       info: {
-        title: 'Recta API',
+        title: 'Meudinheirim API',
         description: 'Personal finance backend with household collaboration support',
         version: '1.0.0',
       },
@@ -429,7 +429,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get('/', async () => {
     return {
-      name: 'Recta API',
+      name: 'Meudinheirim API',
       version: '1.0.0',
       documentation: '/docs',
       openApiSpec: '/docs/json',
@@ -497,7 +497,7 @@ export async function startServer(): Promise<void> {
     });
 
     console.log(`
-🚀 Recta API is running!
+🚀 Meudinheirim API is running!
    
    Port:       ${port}
    Health:     http://0.0.0.0:${port}/health

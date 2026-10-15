@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { Pool } from 'pg';
 
 const NON_DISPOSABLE_MESSAGE =
-  'TEST_DATABASE_URL is not a disposable test database: it must point at localhost/127.0.0.1 and use a database name starting with "recta_".';
+  'TEST_DATABASE_URL is not a disposable test database: it must point at localhost/127.0.0.1 and use a database name starting with "meudinheirim_".';
 
 export interface IsolatedTestDb {
   readonly url: string;
@@ -23,7 +23,7 @@ export function assertDisposableTestDatabaseUrl(url: string): void {
   const isLoopback = host === 'localhost' || host === '127.0.0.1';
   const databaseName = parsed.pathname.replace(/^\//, '');
   const unsafeName = /prod|production|staging|stg/i.test(databaseName);
-  const disposableName = databaseName.startsWith('recta_');
+  const disposableName = databaseName.startsWith('meudinheirim_');
 
   if (!isLoopback || unsafeName || !disposableName) {
     throw new Error(`Unsafe URL "${sanitize(url)}": ${NON_DISPOSABLE_MESSAGE}`);
@@ -38,7 +38,7 @@ export function getBaseTestDatabaseUrl(): string {
   const url = process.env.TEST_DATABASE_URL;
   if (!url || url.trim().length === 0) {
     throw new Error(
-      'TEST_DATABASE_URL is not set. Point it at a disposable PostgreSQL instance (localhost only, database name starting with "recta_").',
+      'TEST_DATABASE_URL is not set. Point it at a disposable PostgreSQL instance (localhost only, database name starting with "meudinheirim_").',
     );
   }
   assertDisposableTestDatabaseUrl(url);
@@ -48,7 +48,7 @@ export function getBaseTestDatabaseUrl(): string {
 export async function createIsolatedTestDb(): Promise<IsolatedTestDb> {
   const base = getBaseTestDatabaseUrl();
   const adminUrl = new URL(base);
-  const newDbName = `recta_test_${randomBytes(9).toString('hex')}`;
+  const newDbName = `meudinheirim_test_${randomBytes(9).toString('hex')}`;
   adminUrl.pathname = '/postgres';
 
   const adminPool = new Pool({ connectionString: adminUrl.toString() });

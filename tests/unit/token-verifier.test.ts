@@ -11,7 +11,7 @@ import { buildTestRequest } from '../helpers/request.js';
 
 describe('token verifier registry', () => {
   async function load(): Promise<{ setTokenVerifier: typeof FakeSetTokenVerifier; createFakeTokenVerifier: typeof FakeCreateTokenVerifier }> {
-    process.env.DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:5432/recta_test_unit';
+    process.env.DATABASE_URL = process.env.DATABASE_URL ?? 'postgresql://postgres:postgres@127.0.0.1:5432/meudinheirim_test_unit';
     process.env.NODE_ENV = 'test';
     const { setTokenVerifier, createFakeTokenVerifier } = await import('../../src/shared/auth/token-verifier.js');
     return { setTokenVerifier, createFakeTokenVerifier };

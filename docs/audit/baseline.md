@@ -1,13 +1,13 @@
 # Backend Adaptation Baseline
 
-Feature: `recta-backend-adaptation` · Recorded: 2026-10-13
+Feature: `meudinheirim-backend-adaptation` · Recorded: 2026-10-13
 
 ## Repository materialization
 
 | Item | Value |
 | --- | --- |
 | Fork / working repo (origin) | `https://github.com/JoabsonDeSouza/meudinheirim-backend.git` |
-| Upstream (read-only, never pushed) | `https://github.com/lucianodiisouza/recta-selfhosted-backend.git` |
+| Upstream (read-only, never pushed) | `https://github.com/lucianodiisouza/meudinheirim-selfhosted-backend.git` |
 | Main checkout | `/Volumes/Joabson/Files/ProgramaDev/Project/meudinheirim-backend` @ `main` = `32b871373dfae77ea8178e2e03729b343d971b65` |
 | Execution worktree | `/Users/joabson/.config/superpowers/worktrees/meudinheirim-backend/codex-recta-backend-adaptation` |
 | Execution branch | `codex/recta-backend-adaptation` |
@@ -45,9 +45,9 @@ No test scripts exist yet (added in T2). Frontend referenced repo: `meudinherim`
 | Item | Value |
 | --- | --- |
 | Provider | Docker · image `postgres:16-alpine` |
-| Container | `recta-disposable-db` (exclusively created for this baseline) |
+| Container | disposable PostgreSQL container (created for this baseline) |
 | Port | `127.0.0.1:55455` (loopback only) |
-| database / user / password | `recta_baseline` / `postgres` / disposable local password (not a secret; never committed) |
+| database / user / password | disposable baseline DB / `postgres` / disposable local password (not a secret; never committed) |
 | Guard rule adopted in T2 | test DB helper must refuse any URL not pointed at `127.0.0.1`/`localhost` and not named like a disposable test DB |
 | Production DBs contacted | none |
 

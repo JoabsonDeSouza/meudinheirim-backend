@@ -13,8 +13,8 @@ function testDatabaseUrl(): string {
   }
   const databaseName = url.pathname.replace(/^\//, '');
   const loopback = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
-  if (!loopback || !databaseName.startsWith('recta_') || /prod|production|staging/i.test(databaseName)) {
-    throw new Error('TEST_DATABASE_URL must target a loopback database named recta_*; refusing migration.');
+  if (!loopback || !databaseName.startsWith('meudinheirim_') || /prod|production|staging/i.test(databaseName)) {
+    throw new Error('TEST_DATABASE_URL must target a loopback database named meudinheirim_*; refusing migration.');
   }
   return value;
 }

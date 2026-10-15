@@ -1,6 +1,6 @@
 # Category contract baseline
 
-Recorded: 2026-10-13 · Feature: `recta-backend-adaptation` · Task: T10
+Recorded: 2026-10-13 · Feature: `meudinheirim-backend-adaptation` · Task: T10
 
 ## Existing storage invariants
 

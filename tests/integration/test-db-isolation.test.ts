@@ -19,7 +19,7 @@ describe('getBaseTestDatabaseUrl', () => {
   });
 
   it('fails fast when TEST_DATABASE_URL is not disposable', () => {
-    process.env.TEST_DATABASE_URL = 'postgresql://u:p@prod-db.internal:5432/recta_prod';
+    process.env.TEST_DATABASE_URL = 'postgresql://u:p@prod-db.internal:5432/meudinheirim_prod';
     expect(() => getBaseTestDatabaseUrl()).toThrow(/not a disposable test database/i);
   });
 });

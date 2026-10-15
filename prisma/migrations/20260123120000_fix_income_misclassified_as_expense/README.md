@@ -13,7 +13,7 @@ Isso corrige o efeito do upgrade anterior (`fix_transaction_types`): quando cate
 
 ### 1. Backup
 ```bash
-pg_dump -h localhost -U seu_usuario -d recta > backup_antes_fix_income_$(date +%Y%m%d).sql
+pg_dump -h localhost -U seu_usuario -d meudinheirim_dev > backup_antes_fix_income_$(date +%Y%m%d).sql
 ```
 
 ## Como executar

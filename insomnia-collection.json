@@ -9,7 +9,7 @@
       "parentId": null,
       "modified": 1704547200000,
       "created": 1704547200000,
-      "name": "Recta Backend API",
+      "name": "Meudinheirim Backend API",
       "description": "Personal finance backend API collection",
       "environment": {
         "base_url": "http://localhost:3000",
