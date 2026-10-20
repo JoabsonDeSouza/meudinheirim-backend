@@ -87,7 +87,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     openapi: {
       openapi: '3.0.0',
       info: {
-        title: 'Recta API',
+        title: 'Meudinheirim API',
         description: 'Personal finance backend with household collaboration support',
         version: '1.0.0',
       },
@@ -168,7 +168,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // CORS
-  // Allow localhost (any port) and any domain containing "recta.app"
+  // Allow localhost (any port) and any domain containing "meudinheirim.app"
   await app.register(cors, {
     origin: (origin, callback) => {
       // Allow requests with no origin (like mobile apps or curl requests)
@@ -189,10 +189,10 @@ export async function buildApp(): Promise<FastifyInstance> {
         return;
       }
       
-      // Allow any domain containing "recta.app"
-      if (origin.includes('recta.app')) {
+      // Allow any domain containing "meudinheirim.app"
+      if (origin.includes('meudinheirim.app')) {
         if (isProduction) {
-          console.log(`[CORS] Allowing recta.app origin: ${origin}`);
+          console.log(`[CORS] Allowing meudinheirim.app origin: ${origin}`);
         }
         callback(null, true);
         return;
@@ -279,7 +279,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   app.get('/', async () => {
     return {
-      name: 'Recta API',
+      name: 'Meudinheirim API',
       version: '1.0.0',
       documentation: '/docs',
       openApiSpec: '/docs/json',
@@ -330,7 +330,7 @@ export async function startServer(): Promise<void> {
     });
 
     console.log(`
-🚀 Recta API is running!
+🚀 Meudinheirim API is running!
    
    Port:       ${port}
    Health:     http://0.0.0.0:${port}/health
@@ -406,5 +406,4 @@ export async function startServer(): Promise<void> {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }
-
 

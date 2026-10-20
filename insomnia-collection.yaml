@@ -1,6 +1,6 @@
 type: collection.insomnia.rest/5.0
 schema_version: "5.1"
-name: Recta Backend API
+name: Meudinheirim Backend API
 meta:
   id: fld_root
   created: 1704547200000

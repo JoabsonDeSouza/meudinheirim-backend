@@ -31,7 +31,7 @@ const envSchema = z.object({
   
   // CORS - Allowed origins (comma-separated list)
   // In production, specify allowed frontend URLs
-  // Example: "https://recta.app,https://www.recta.app,http://localhost:5173"
+  // Example: "https://meudinheirim.app,https://www.meudinheirim.app,http://localhost:5173"
   ALLOWED_ORIGINS: z.string().optional(),
 });
 
@@ -77,6 +77,5 @@ export const env = validateEnv();
 export const isProduction = env.NODE_ENV === 'production';
 export const isDevelopment = env.NODE_ENV === 'development';
 export const isTest = env.NODE_ENV === 'test';
-
 
 
