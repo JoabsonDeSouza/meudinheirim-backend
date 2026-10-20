@@ -1,5 +1,8 @@
+import type { NotificationType as Prisma_NotificationType } from '../../generated/prisma/enums.js';
+import type { NotificationStatus as Prisma_NotificationStatus } from '../../generated/prisma/enums.js';
+
 import { prisma } from '../../shared/db/prisma.js';
-import { Prisma } from '../../generated/prisma/client.js';
+import { type Prisma } from '../../generated/prisma/client.js';
 import { NotificationType, NotificationStatus, type ListNotificationsQuery, type UpdateNotificationStatusInput } from './notifications.schema.js';
 import { NotFoundError } from '../../shared/errors/index.js';
 
@@ -12,10 +15,10 @@ export async function createNotification(params: {
   type: NotificationType;
   title: string;
   message: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   deepLink?: string;
   expiresAt?: Date;
-}) {
+}): Promise<{ id: string; type: Prisma_NotificationType; status: Prisma_NotificationStatus; createdAt: Date; updatedAt: Date; message: string; userId: string; expiresAt: Date | null; title: string; metadata: Prisma.JsonValue | null; deepLink: string | null; readAt: Date | null; archivedAt: Date | null; }> {
   const { userId, type, title, message, metadata, deepLink, expiresAt } = params;
 
   return await prisma.notification.create({
@@ -44,7 +47,7 @@ export async function createHouseholdInviteNotification(params: {
   inviterName: string;
   role: string;
   expiresAt: Date;
-}) {
+}): Promise<{ id: string; type: Prisma_NotificationType; status: Prisma_NotificationStatus; createdAt: Date; updatedAt: Date; message: string; userId: string; expiresAt: Date | null; title: string; metadata: Prisma.JsonValue | null; deepLink: string | null; readAt: Date | null; archivedAt: Date | null; }> {
   const { inviteId, inviteeId, householdId, householdName, inviterName, role, expiresAt } = params;
 
   const roleLabel = role === 'EDITOR' ? 'Editor' : 'Visualizador';
@@ -72,10 +75,10 @@ export async function createHouseholdInviteNotification(params: {
 /**
  * Get all notifications for a user
  */
-export async function getUserNotifications(userId: string, query: ListNotificationsQuery) {
+export async function getUserNotifications(userId: string, query: ListNotificationsQuery): Promise<{ items: { id: string; type: Prisma_NotificationType; status: Prisma_NotificationStatus; createdAt: Date; updatedAt: Date; message: string; userId: string; expiresAt: Date | null; title: string; metadata: Prisma.JsonValue | null; deepLink: string | null; readAt: Date | null; archivedAt: Date | null; }[]; pagination: { hasMore: boolean; nextCursor: string | null; }; }> {
   const { status, type, limit, cursor } = query;
 
-  const where: any = {
+  const where: Prisma.NotificationWhereInput = {
     userId,
     ...(status && { status }),
     ...(type && { type }),
@@ -115,7 +118,7 @@ export async function getUserNotifications(userId: string, query: ListNotificati
 /**
  * Get a single notification by ID
  */
-export async function getNotification(notificationId: string, userId: string) {
+export async function getNotification(notificationId: string, userId: string): Promise<{ id: string; type: Prisma_NotificationType; status: Prisma_NotificationStatus; createdAt: Date; updatedAt: Date; message: string; userId: string; expiresAt: Date | null; title: string; metadata: Prisma.JsonValue | null; deepLink: string | null; readAt: Date | null; archivedAt: Date | null; }> {
   const notification = await prisma.notification.findFirst({
     where: {
       id: notificationId,
@@ -133,7 +136,7 @@ export async function getNotification(notificationId: string, userId: string) {
 /**
  * Mark notification as read
  */
-export async function markNotificationAsRead(notificationId: string, userId: string) {
+export async function markNotificationAsRead(notificationId: string, userId: string): Promise<{ id: string; type: Prisma_NotificationType; status: Prisma_NotificationStatus; createdAt: Date; updatedAt: Date; message: string; userId: string; expiresAt: Date | null; title: string; metadata: Prisma.JsonValue | null; deepLink: string | null; readAt: Date | null; archivedAt: Date | null; }> {
   const notification = await getNotification(notificationId, userId);
 
   if (notification.status === NotificationStatus.READ) {
@@ -152,7 +155,7 @@ export async function markNotificationAsRead(notificationId: string, userId: str
 /**
  * Mark notification as unread
  */
-export async function markNotificationAsUnread(notificationId: string, userId: string) {
+export async function markNotificationAsUnread(notificationId: string, userId: string): Promise<{ id: string; type: Prisma_NotificationType; status: Prisma_NotificationStatus; createdAt: Date; updatedAt: Date; message: string; userId: string; expiresAt: Date | null; title: string; metadata: Prisma.JsonValue | null; deepLink: string | null; readAt: Date | null; archivedAt: Date | null; }> {
   const notification = await getNotification(notificationId, userId);
 
   if (notification.status === NotificationStatus.UNREAD) {
@@ -171,7 +174,7 @@ export async function markNotificationAsUnread(notificationId: string, userId: s
 /**
  * Archive notification
  */
-export async function archiveNotification(notificationId: string, userId: string) {
+export async function archiveNotification(notificationId: string, userId: string): Promise<{ id: string; type: Prisma_NotificationType; status: Prisma_NotificationStatus; createdAt: Date; updatedAt: Date; message: string; userId: string; expiresAt: Date | null; title: string; metadata: Prisma.JsonValue | null; deepLink: string | null; readAt: Date | null; archivedAt: Date | null; }> {
   const notification = await getNotification(notificationId, userId);
 
   if (notification.status === NotificationStatus.ARCHIVED) {
@@ -194,12 +197,12 @@ export async function updateNotificationStatus(
   notificationId: string,
   userId: string,
   input: UpdateNotificationStatusInput
-) {
+): Promise<{ id: string; type: Prisma_NotificationType; status: Prisma_NotificationStatus; createdAt: Date; updatedAt: Date; message: string; userId: string; expiresAt: Date | null; title: string; metadata: Prisma.JsonValue | null; deepLink: string | null; readAt: Date | null; archivedAt: Date | null; }> {
   const { status } = input;
 
   await getNotification(notificationId, userId); // Ensure notification exists and belongs to user
 
-  const updateData: any = {
+  const updateData: Prisma.NotificationUpdateInput = {
     status,
   };
 
@@ -221,7 +224,7 @@ export async function updateNotificationStatus(
 /**
  * Get unread notification count for a user
  */
-export async function getUnreadNotificationCount(userId: string) {
+export async function getUnreadNotificationCount(userId: string): Promise<number> {
   const count = await prisma.notification.count({
     where: {
       userId,
@@ -240,7 +243,7 @@ export async function getUnreadNotificationCount(userId: string) {
 /**
  * Mark all notifications as read for a user
  */
-export async function markAllNotificationsAsRead(userId: string) {
+export async function markAllNotificationsAsRead(userId: string): Promise<Prisma.BatchPayload> {
   return await prisma.notification.updateMany({
     where: {
       userId,
@@ -256,14 +259,14 @@ export async function markAllNotificationsAsRead(userId: string) {
 /**
  * Delete notification (soft delete by archiving)
  */
-export async function deleteNotification(notificationId: string, userId: string) {
+export async function deleteNotification(notificationId: string, userId: string): Promise<{ id: string; type: Prisma_NotificationType; status: Prisma_NotificationStatus; createdAt: Date; updatedAt: Date; message: string; userId: string; expiresAt: Date | null; title: string; metadata: Prisma.JsonValue | null; deepLink: string | null; readAt: Date | null; archivedAt: Date | null; }> {
   return await archiveNotification(notificationId, userId);
 }
 
 /**
  * Clean up expired notifications (can be called by a cron job)
  */
-export async function cleanupExpiredNotifications() {
+export async function cleanupExpiredNotifications(): Promise<Prisma.BatchPayload> {
   const result = await prisma.notification.deleteMany({
     where: {
       expiresAt: {

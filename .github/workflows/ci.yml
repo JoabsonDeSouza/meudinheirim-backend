@@ -1,0 +1,59 @@
+name: backend-ci
+
+on:
+  push:
+    branches:
+      - main
+      - 'codex/**'
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: meudinheirim_disposable
+          POSTGRES_DB: meudinheirim_test_admin
+        ports:
+          - '127.0.0.1:55455:5432'
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:meudinheirim_disposable@127.0.0.1:55455/meudinheirim_test_admin
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npm run db:generate
+      - name: Forbidden typing gate
+        run: npm run gate:forbidden-typing
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Integration tests
+        run: npm run test:integration
+      - name: Contract tests
+        run: npm run test:contract
+      - name: Security tests
+        run: npm run test:security
+      - name: Apply migrations to isolated test database
+        run: npm run db:deploy:test
+      - name: Migration tests
+        run: npm run test:migrations
+      - name: Build
+        run: npm run build

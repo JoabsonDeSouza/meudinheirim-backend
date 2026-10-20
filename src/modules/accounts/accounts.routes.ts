@@ -17,7 +17,7 @@ import {
 } from './accounts.schema.js';
 import * as accountsService from './accounts.service.js';
 
-export async function accountRoutes(app: FastifyInstance) {
+export async function accountRoutes(app: FastifyInstance): Promise<void> {
   // All routes require authentication
   app.addHook('preHandler', authMiddleware());
 

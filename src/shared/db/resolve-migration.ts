@@ -3,6 +3,21 @@ import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
+
+interface SpawnedCommandError {
+  readonly stderr?: string;
+}
+
+function asSpawnedCommandError(error: unknown): SpawnedCommandError | undefined {
+  if (typeof error === 'object' && error !== null && 'stderr' in error) {
+    const candidate: { stderr?: unknown } = error;
+    if (candidate.stderr === undefined || typeof candidate.stderr === 'string') {
+      return { stderr: candidate.stderr };
+    }
+  }
+  return undefined;
+}
+
 /**
  * Resolve a failed migration by marking it as rolled back or applied
  * @param migrationName - The name of the migration to resolve (e.g., '20250120000000_add_credit_card_closing_day_and_linked_account')
@@ -28,7 +43,7 @@ export async function resolveMigration(
     
     console.log(`✅ Migration "${migrationName}" resolved successfully as ${action}`);
   } catch (error) {
-    console.error(`❌ Failed to resolve migration "${migrationName}":`, error);
+    console.error('Failed to resolve migration', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     throw error;
   }
 }
@@ -55,10 +70,11 @@ export async function listFailedMigrations(): Promise<string[]> {
     }
     
     return [];
-  } catch (error: any) {
+  } catch (unknownError) {
     // If migrate deploy fails with P3009, extract the migration name
-    if (error.stderr && error.stderr.includes('P3009')) {
-      const migrationMatch = error.stderr.match(/`([^`]+)` migration.*failed/);
+    const error = asSpawnedCommandError(unknownError);
+    if (error?.stderr?.includes('P3009') === true) {
+      const migrationMatch = (error.stderr ?? '').match(/`([^`]+)` migration.*failed/);
       if (migrationMatch) {
         return [migrationMatch[1]];
       }
@@ -100,7 +116,7 @@ export async function autoResolveFailedMigrations(): Promise<void> {
       }
     }
   } catch (error) {
-    console.error('❌ Failed to auto-resolve migrations:', error);
+    console.error('Failed to auto-resolve migrations', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     throw error;
   }
 }

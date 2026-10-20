@@ -14,7 +14,7 @@ import {
 } from './recurring-transactions.schema.js';
 import * as recurringTransactionsService from './recurring-transactions.service.js';
 
-export async function recurringTransactionRoutes(app: FastifyInstance) {
+export async function recurringTransactionRoutes(app: FastifyInstance): Promise<void> {
   // All routes require authentication
   app.addHook('preHandler', authMiddleware());
 

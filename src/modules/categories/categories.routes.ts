@@ -1,10 +1,9 @@
 import type { FastifyInstance } from 'fastify';
-import { authMiddleware, getAuthUser } from '../../shared/middleware/auth.middleware.js';
+import { authMiddleware } from '../../shared/middleware/auth.middleware.js';
 import {
   requireHouseholdMember,
   requireEditor,
   ensurePersonalHousehold,
-  getUserByFirebaseUid,
 } from '../../shared/middleware/authorization.middleware.js';
 import {
   CategoryName,
@@ -23,7 +22,7 @@ import {
 } from './categories.schema.js';
 import * as categoriesService from './categories.service.js';
 
-export async function categoryRoutes(app: FastifyInstance) {
+export async function categoryRoutes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware());
 
   /**
@@ -215,8 +214,6 @@ export async function categoryRoutes(app: FastifyInstance) {
     const { categoryId } = categoryIdParamSchema.parse(request.params);
     const body = updateCategorySchema.parse(request.body);
 
-    const authUser = getAuthUser(request);
-    const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
     const cat = await prisma.category.findFirst({ where: { id: categoryId }, select: { householdId: true } });
     if (!cat) throw new NotFoundError('Category');
     await requireEditor(request, cat.householdId);

@@ -1,5 +1,4 @@
 import { prisma } from '../../shared/db/prisma.js';
-import { NotFoundError, BadRequestError } from '../../shared/errors/index.js';
 
 /**
  * Process referral code when a new user signs up
@@ -66,7 +65,7 @@ export async function processReferralCode(
     console.log(`[Referral] Successfully created referral record: ${referral.id} (${referrer.id} -> ${newUserId})`);
     return referrer.id;
   } catch (error) {
-    console.error(`[Referral] Error creating referral record:`, error);
+    console.error('[Referral] Referral record creation failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     throw error;
   }
 }

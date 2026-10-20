@@ -4,6 +4,21 @@ import { autoResolveFailedMigrations } from './resolve-migration.js';
 
 const execAsync = promisify(exec);
 
+
+interface SpawnedCommandError {
+  readonly stderr?: string;
+}
+
+function asSpawnedCommandError(error: unknown): SpawnedCommandError | undefined {
+  if (typeof error === 'object' && error !== null && 'stderr' in error) {
+    const candidate: { stderr?: unknown } = error;
+    if (candidate.stderr === undefined || typeof candidate.stderr === 'string') {
+      return { stderr: candidate.stderr };
+    }
+  }
+  return undefined;
+}
+
 /**
  * Run Prisma migrations
  * Automatically resolves failed migrations if they're safe to roll back
@@ -29,9 +44,10 @@ export async function runMigrations(): Promise<void> {
     
     // Check if fix_income migration was just applied and run balance recompute
     await checkAndRunBalanceRecompute(stdout);
-  } catch (error: any) {
+  } catch (unknownError) {
+    const error = asSpawnedCommandError(unknownError);
     // Check if this is a failed migration error (P3009)
-    if (error.stderr && error.stderr.includes('P3009')) {
+    if (error?.stderr?.includes('P3009') === true) {
       console.error('❌ Migration failed: Found failed migrations in database');
       console.log('🔄 Attempting to auto-resolve failed migrations...');
       
@@ -67,7 +83,7 @@ export async function runMigrations(): Promise<void> {
       }
     }
     
-    console.error('❌ Migration failed:', error);
+    console.error('Migration failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
     throw error;
   }
 }
@@ -102,9 +118,10 @@ async function checkAndRunBalanceRecompute(migrationOutput: string): Promise<voi
     }
     
     console.log('✅ Balance recompute completed');
-  } catch (error: any) {
+  } catch (unknownError) {
     // Don't fail the migration if recompute fails - log and continue
-    console.error('⚠️  Balance recompute failed (non-fatal):', error?.message || error);
+    const message = unknownError instanceof Error ? unknownError.message : String(unknownError);
+    console.error('⚠️  Balance recompute failed (non-fatal):', message);
     console.error('   The migration completed successfully.');
     console.error('   You can run balance recompute manually later with: npm run script:recompute-balances');
   }

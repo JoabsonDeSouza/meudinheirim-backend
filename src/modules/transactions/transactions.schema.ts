@@ -11,7 +11,7 @@ export const transactionSplitInputSchema = z.object({
   userId: z.string().uuid(),
   amount: z.coerce.number().positive('Split amount must be positive'),
   accountId: z.string().uuid().optional(), // Account to pay from (optional, will be auto-selected if not provided)
-});
+}).strict();
 
 export type TransactionSplitInput = z.infer<typeof transactionSplitInputSchema>;
 
@@ -43,11 +43,10 @@ export const createTransactionSchema = z.object({
   installmentId: z.string().optional(),
   installmentNumber: z.number().int().positive().optional(),
   totalInstallments: z.number().int().positive().optional(),
-  attachmentUrl: z.string().max(500).optional(), // Pode ser URL ou identificador técnico (ex: invoice_pay:xxx:xxx)
   // Split expense fields (only for EXPENSE transactions in shared households)
   isSplit: z.boolean().optional().default(false),
   splits: z.array(transactionSplitInputSchema).optional(), // Array of splits when isSplit is true
-}).refine((data) => {
+}).strict().refine((data) => {
   // If type is TRANSFER, fromAccountId and toAccountId are required
   if (data.type === TransactionType.TRANSFER) {
     return !!data.fromAccountId && !!data.toAccountId;
@@ -118,8 +117,7 @@ export const updateTransactionSchema = z.object({
   installmentId: z.string().nullable().optional(),
   installmentNumber: z.number().int().positive().nullable().optional(),
   totalInstallments: z.number().int().positive().nullable().optional(),
-  attachmentUrl: z.string().max(500).nullable().optional(), // Pode ser URL ou identificador técnico (ex: invoice_pay:xxx:xxx)
-});
+}).strict();
 
 export type UpdateTransactionInput = z.infer<typeof updateTransactionSchema>;
 
@@ -128,7 +126,7 @@ export type UpdateTransactionInput = z.infer<typeof updateTransactionSchema>;
  */
 export const transactionIdParamSchema = z.object({
   transactionId: z.string().uuid(),
-});
+}).strict();
 
 export type TransactionIdParam = z.infer<typeof transactionIdParamSchema>;
 
@@ -145,7 +143,7 @@ export const listTransactionsQuerySchema = paginationSchema
     startDate: localDateSchema.optional(),
     endDate: localDateSchema.optional(),
     search: z.string().max(100).optional(),
-  });
+  }).strict();
 
 export type ListTransactionsQuery = z.infer<typeof listTransactionsQuerySchema>;
 
@@ -156,7 +154,7 @@ export const transactionSummaryQuerySchema = monthFilterSchema.extend({
   householdId: z.string().uuid().optional(), // Optional - will use personal household if not provided
   startDate: z.coerce.date().optional(),
   endDate: z.coerce.date().optional(),
-});
+}).strict();
 
 export type TransactionSummaryQuery = z.infer<typeof transactionSummaryQuerySchema>;
 
@@ -178,9 +176,9 @@ export const batchCreateTransactionsSchema = z.object({
       installmentId: z.string().optional(),
       installmentNumber: z.number().int().positive().optional(),
       totalInstallments: z.number().int().positive().optional(),
-    })
+    }).strict()
   ).min(1).max(100),
-});
+}).strict();
 
 export type BatchCreateTransactionsInput = z.infer<typeof batchCreateTransactionsSchema>;
 
@@ -190,7 +188,7 @@ export type BatchCreateTransactionsInput = z.infer<typeof batchCreateTransaction
 export const batchDeleteTransactionsSchema = z.object({
   householdId: z.string().uuid(),
   transactionIds: z.array(z.string().uuid()).min(1).max(100),
-});
+}).strict();
 
 export type BatchDeleteTransactionsInput = z.infer<typeof batchDeleteTransactionsSchema>;
 
@@ -204,7 +202,7 @@ export const payInvoiceSchema = z.object({
   amount: z.coerce.number().positive().optional(), // Valor a pagar (opcional, se não fornecido usa o total da fatura)
   month: z.string().regex(/^\d{4}-\d{2}$/, 'Month must be in format YYYY-MM'), // "YYYY-MM"
   description: z.string().max(255).optional(),
-});
+}).strict();
 
 export type PayInvoiceInput = z.infer<typeof payInvoiceSchema>;
 
@@ -214,9 +212,20 @@ export type PayInvoiceInput = z.infer<typeof payInvoiceSchema>;
 export const creditCardInvoiceParamsSchema = z.object({
   accountId: z.string().uuid(),
   month: z.string().regex(/^\d{4}-\d{2}$/, 'Month must be in format YYYY-MM'),
-});
+}).strict();
 
 export type CreditCardInvoiceParams = z.infer<typeof creditCardInvoiceParamsSchema>;
+
+/**
+ * Invoice listing query
+ */
+export const creditCardInvoiceQuerySchema = z.object({
+  householdId: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+  cursor: z.string().optional(),
+}).strict();
+
+export type CreditCardInvoiceQuery = z.infer<typeof creditCardInvoiceQuerySchema>;
 
 /**
  * Undo payment params
@@ -224,7 +233,7 @@ export type CreditCardInvoiceParams = z.infer<typeof creditCardInvoiceParamsSche
 export const undoPaymentParamsSchema = z.object({
   accountId: z.string().uuid(),
   transactionId: z.string().uuid(),
-});
+}).strict();
 
 export type UndoPaymentParams = z.infer<typeof undoPaymentParamsSchema>;
 
@@ -239,7 +248,7 @@ export const createTransferSchema = z.object({
   description: z.string().max(255).optional(),
   date: localDateSchema,
   notes: z.string().max(1000).optional(),
-});
+}).strict();
 
 export type CreateTransferInput = z.infer<typeof createTransferSchema>;
 
@@ -254,7 +263,7 @@ export const createAllocationSchema = z.object({
   description: z.string().max(255).optional(),
   date: localDateSchema,
   notes: z.string().max(1000).optional(),
-});
+}).strict();
 
 export type CreateAllocationInput = z.infer<typeof createAllocationSchema>;
 
@@ -269,7 +278,7 @@ export const createDeallocationSchema = z.object({
   description: z.string().max(255).optional(),
   date: localDateSchema,
   notes: z.string().max(1000).optional(),
-});
+}).strict();
 
 export type CreateDeallocationInput = z.infer<typeof createDeallocationSchema>;
 
@@ -279,7 +288,7 @@ export type CreateDeallocationInput = z.infer<typeof createDeallocationSchema>;
 export const monthlyRecapQuerySchema = z.object({
   householdId: z.string().uuid().optional(), // Optional - will use personal household if not provided
   month: z.string().regex(/^\d{4}-\d{2}$/, 'Month must be in format YYYY-MM').optional(), // Optional, defaults to current month
-});
+}).strict();
 
 export type MonthlyRecapQuery = z.infer<typeof monthlyRecapQuerySchema>;
 
@@ -289,9 +298,7 @@ export type MonthlyRecapQuery = z.infer<typeof monthlyRecapQuerySchema>;
 export const heatmapQuerySchema = z.object({
   householdId: z.string().uuid().optional(), // Optional - will use personal household if not provided
   month: z.string().regex(/^\d{4}-\d{2}$/, 'Month must be in format YYYY-MM').optional(), // Optional, defaults to current month
-});
+}).strict();
 
 export type HeatmapQuery = z.infer<typeof heatmapQuerySchema>;
-
-
 

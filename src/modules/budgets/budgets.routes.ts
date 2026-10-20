@@ -14,7 +14,7 @@ import {
 } from './budgets.schema.js';
 import * as budgetsService from './budgets.service.js';
 
-export async function budgetRoutes(app: FastifyInstance) {
+export async function budgetRoutes(app: FastifyInstance): Promise<void> {
   // All routes require authentication
   app.addHook('preHandler', authMiddleware());
 

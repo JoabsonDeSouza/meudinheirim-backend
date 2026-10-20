@@ -24,7 +24,7 @@ function calculateBalanceChange(amount: number, isIncome: boolean, accountType: 
   return isIncome ? amount : -amount;
 }
 
-async function main() {
+async function main(): Promise<void> {
   console.log('🔍 Finding accounts affected by fix_income migration...');
 
   const incomeCategories = ['SALARY', 'FREELANCE', 'INVESTMENTS', 'SALES', 'RENTAL_INCOME', 'OTHER_INCOME'];
@@ -125,11 +125,11 @@ async function main() {
         const absAmount = Math.abs(amount);
         const sign = amount >= 0 ? 1 : -1;
         const alloc = allocatedDelta.get(t.accountId) ?? 0;
-        allocatedDelta.set(t.accountId, alloc + sign * absAmount);
+        allocatedDelta.set(t.accountId, alloc + (sign * absAmount));
       }
       if (affectedAccountIds.includes(t.relatedEntityId)) {
         const cc = creditCardAllocationDelta.get(t.relatedEntityId) ?? 0;
-        creditCardAllocationDelta.set(t.relatedEntityId, cc + Math.abs(amount) * (amount >= 0 ? 1 : -1));
+        creditCardAllocationDelta.set(t.relatedEntityId, cc + (Math.abs(amount) * (amount >= 0 ? 1 : -1)));
       }
       continue;
     }

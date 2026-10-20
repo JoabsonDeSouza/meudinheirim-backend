@@ -33,7 +33,9 @@ export function initializeFirebase(): admin.app.App {
     console.log('✅ Firebase Admin initialized');
     return firebaseApp;
   } catch (error) {
-    console.error('❌ Firebase Admin initialization failed:', error);
+    console.error('Firebase Admin initialization failed', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
     // Don't exit - allow server to start for health checks
     throw error;
   }
@@ -48,7 +50,6 @@ export function getFirebaseAuth(): admin.auth.Auth {
   }
   return admin.auth();
 }
-
 
 
 

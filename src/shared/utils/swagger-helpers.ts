@@ -2,18 +2,22 @@
  * Helper functions for Swagger/OpenAPI documentation
  */
 
-export function createSwaggerSchema(options: {
+import type { FastifySchema } from 'fastify';
+
+type RouteSchemaOptions = {
   description: string;
   tag: string;
   requiresAuth?: boolean;
-  params?: any;
-  querystring?: any;
-  body?: any;
-  response?: any;
-}) {
+  params?: FastifySchema['params'];
+  querystring?: FastifySchema['querystring'];
+  body?: FastifySchema['body'];
+  response?: FastifySchema['response'];
+};
+
+export function createSwaggerSchema(options: RouteSchemaOptions): FastifySchema {
   const { description, tag, requiresAuth = true, params, querystring, body, response } = options;
 
-  const schema: any = {
+  const schema: FastifySchema = {
     description,
     tags: [tag],
   };
@@ -51,4 +55,3 @@ export function createSwaggerSchema(options: {
 
   return schema;
 }
-

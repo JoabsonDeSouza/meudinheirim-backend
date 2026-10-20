@@ -1,106 +1,33 @@
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import type { DecodedIdToken } from 'firebase-admin/auth';
-import { getFirebaseAuth } from '../config/firebase.js';
-import { UnauthorizedError, InvalidTokenError, EmailNotVerifiedError } from '../errors/index.js';
+import { UnauthorizedError } from '../errors/index.js';
+import { authenticateRequest, getAuthUser } from '../auth/authenticate.js';
 
-/**
- * Authenticated user context injected into requests
- */
-export interface AuthUser {
-  uid: string;
-  email: string;
-  emailVerified: boolean;
-}
+import type { AuthUser as AuthUserType } from '../auth/authenticate.js';
 
-/**
- * Extend Fastify request to include auth user
- */
+type AuthUser = AuthUserType;
+export { getAuthUser };
+
 declare module 'fastify' {
   interface FastifyRequest {
     authUser?: AuthUser;
   }
 }
 
-/**
- * Extract Bearer token from Authorization header
- */
-function extractBearerToken(request: FastifyRequest): string | null {
-  const authHeader = request.headers.authorization;
-  if (!authHeader) {
-    return null;
-  }
-
-  const [scheme, token] = authHeader.split(' ');
-  if (scheme?.toLowerCase() !== 'bearer' || !token) {
-    return null;
-  }
-
-  return token;
+export interface AuthMiddlewareOptions {
+  requireEmailVerified?: boolean;
 }
 
-/**
- * Authentication middleware
- * Verifies Firebase ID token and injects authUser into request
- *
- * Options:
- * - requireEmailVerified: Require email to be verified (default: true)
- */
-export function authMiddleware(options: { requireEmailVerified?: boolean } = {}) {
+export function authMiddleware(options: AuthMiddlewareOptions = {}): (request: FastifyRequest, _reply: FastifyReply) => Promise<void> {
   const { requireEmailVerified = true } = options;
 
-  return async function authenticate(
-    request: FastifyRequest,
-    reply: FastifyReply
-  ): Promise<void> {
-    // Extract token from header
-    const token = extractBearerToken(request);
-    if (!token) {
-      throw new UnauthorizedError('Bearer token required');
-    }
-
-    // Verify token with Firebase
-    let decodedToken: DecodedIdToken;
-    try {
-      const auth = getFirebaseAuth();
-      decodedToken = await auth.verifyIdToken(token);
-    } catch (error) {
-      request.log.warn({ error }, 'Token verification failed');
-      throw new InvalidTokenError();
-    }
-
-    // Check email verification if required
-    if (requireEmailVerified && !decodedToken.email_verified) {
-      throw new EmailNotVerifiedError();
-    }
-
-    // Validate email is present (required for user creation)
-    if (!decodedToken.email) {
-      throw new UnauthorizedError('Email is required for authentication');
-    }
-
-    // Inject auth user into request
+  return async function authenticate(request: FastifyRequest, _reply: FastifyReply): Promise<void> {
+    const authUser = await authenticateRequest(request, { requireEmailVerified });
     request.authUser = {
-      uid: decodedToken.uid,
-      email: decodedToken.email,
-      emailVerified: decodedToken.email_verified || false,
+      uid: authUser.uid,
+      email: authUser.email,
+      emailVerified: authUser.emailVerified,
     };
   };
 }
 
-/**
- * Get authenticated user from request
- * Throws if user is not authenticated
- */
-export function getAuthUser(request: FastifyRequest): AuthUser {
-  if (!request.authUser) {
-    throw new UnauthorizedError('Authentication required');
-  }
-  return request.authUser;
-}
-
-
-
-
-
-
-
+export { UnauthorizedError };

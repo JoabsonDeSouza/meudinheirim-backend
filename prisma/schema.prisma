@@ -44,6 +44,7 @@ model User {
   referralsAsReferred      Referral?         @relation("Referred")
   notifications            Notification[]
   transactionSplits        TransactionSplit[]
+  syncMutations            SyncMutation[]
 
   @@map("users")
 }
@@ -71,6 +72,7 @@ model Household {
   categories            Category[]
   transactions          Transaction[]
   budgets               Budget[]
+  creditCardInvoices    CreditCardInvoice[]
   savingsGoals          SavingsGoal[]
   recurringTransactions RecurringTransaction[]
 
@@ -151,6 +153,11 @@ model Account {
   type             AccountType
   balance          Decimal       @default(0) @db.Decimal(15, 2) // Mantido para compatibilidade (será total_balance)
   currency         String        @default("BRL") @db.VarChar(3)
+  institution      String?       @db.VarChar(100)
+  brand            String?       @db.VarChar(50)
+  cardNetwork      String?       @map("card_network") @db.VarChar(20)
+  last4            String?       @db.VarChar(4)
+  version          Int           @default(1)
   isActive         Boolean       @default(true) @map("is_active")
   status           AccountStatus @default(ACTIVE)
   color            String?       @db.VarChar(7) // Hex color
@@ -174,6 +181,7 @@ model Account {
   household             Household              @relation(fields: [householdId], references: [id], onDelete: Cascade)
   linkedAccount         Account?               @relation("LinkedAccount", fields: [linkedAccountId], references: [id], onDelete: SetNull)
   linkedCreditCards     Account[]              @relation("LinkedAccount") // Cartões vinculados a esta conta
+  creditCardInvoices    CreditCardInvoice[]
   transactions          Transaction[]          @relation("TransactionAccount")
   fromTransactions      Transaction[]          @relation("TransactionFromAccount")
   toTransactions        Transaction[]          @relation("TransactionToAccount")
@@ -189,6 +197,12 @@ model Account {
 enum CategoryType {
   INCOME
   EXPENSE
+}
+
+enum InvoiceStatus {
+  OPEN
+  CLOSED
+  PAID
 }
 
 enum TransactionType {
@@ -261,6 +275,9 @@ model Transaction {
   accountId              String?         @map("account_id") @db.Uuid // Para INCOME/EXPENSE
   categoryName           String?         @map("category_name") @db.VarChar(50) // Nullable para TRANSFER/ALLOCATION
   amount                 Decimal         @db.Decimal(15, 2)
+  occurredAt             DateTime        @default(now()) @map("occurred_at") @db.Timestamptz(3)
+  timeZone               String          @default("UTC") @map("time_zone") @db.VarChar(64)
+  deletedAt              DateTime?       @map("deleted_at") @db.Timestamptz(3)
   description            String?
   date                   DateTime        @db.Date
   notes                  String?
@@ -272,6 +289,9 @@ model Transaction {
   relatedEntityId        String?         @map("related_entity_id") @db.Uuid // ID da entidade relacionada (ex: cartão de crédito para ALLOCATION)
   // Recurring transaction reference
   recurringTransactionId String?         @map("recurring_transaction_id") @db.Uuid
+  clientMutationId       String          @default(uuid()) @map("client_mutation_id") @db.Uuid
+  version                Int             @default(1)
+  invoiceId              String?         @map("invoice_id") @db.Uuid
   // Installment fields
   installmentId          String?         @map("installment_id")
   installmentNumber      Int?            @map("installment_number")
@@ -289,6 +309,11 @@ model Transaction {
   toAccount            Account?              @relation("TransactionToAccount", fields: [toAccountId], references: [id], onDelete: SetNull)
   relatedAccount       Account?              @relation("TransactionRelatedAccount", fields: [relatedEntityId], references: [id], onDelete: SetNull)
   recurringTransaction RecurringTransaction? @relation(fields: [recurringTransactionId], references: [id], onDelete: SetNull)
+  recurringOccurrence  RecurringOccurrence?
+  invoice              CreditCardInvoice?    @relation("InvoiceCharges", fields: [invoiceId], references: [id], onDelete: SetNull)
+  invoicePayment       InvoicePayment?
+  invoiceRefund        InvoicePayment?      @relation("InvoiceRefund")
+  invoiceMigrationIssue InvoiceMigrationIssue?
   splits                TransactionSplit[]    // Divisões da transação entre membros
 
   // Indexes for common queries
@@ -302,8 +327,41 @@ model Transaction {
   @@index([relatedEntityId])
   @@index([date])
   @@index([recurringTransactionId])
+  @@index([invoiceId])
   @@index([installmentId])
   @@map("transactions")
+}
+
+model SyncMutation {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String   @map("user_id") @db.Uuid
+  clientMutationId String   @map("client_mutation_id") @db.Uuid
+  payloadHash      String   @map("payload_hash") @db.VarChar(64)
+  entityType       String   @map("entity_type") @db.VarChar(32)
+  entityId         String   @map("entity_id") @db.Uuid
+  response         Json
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clientMutationId], map: "sync_mutations_user_mutation_unique")
+  @@index([entityType, entityId])
+  @@map("sync_mutations")
+}
+
+model SyncChange {
+  sequence    BigInt    @id @default(autoincrement())
+  householdId String    @map("household_id") @db.Uuid
+  entityType  String    @map("entity_type") @db.VarChar(32)
+  entityId    String    @map("entity_id") @db.Uuid
+  version     Int       @default(1)
+  payload     Json
+  deletedAt   DateTime? @map("deleted_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([householdId, sequence])
+  @@index([entityType, entityId])
+  @@map("sync_changes")
 }
 
 // ============================================================================
@@ -317,6 +375,7 @@ model Budget {
   monthlyLimit Decimal      @map("monthly_limit") @db.Decimal(15, 2)
   month        DateTime     @db.Date // Month this budget applies to (start of month)
   type         CategoryType // INCOME or EXPENSE
+  currency     String       @default("BRL") @db.VarChar(3)
   createdAt    DateTime     @default(now()) @map("created_at")
   updatedAt    DateTime     @updatedAt @map("updated_at")
 
@@ -324,7 +383,7 @@ model Budget {
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   // One budget per category per household per month
-  @@unique([householdId, categoryName, month])
+  @@unique([householdId, categoryName, month, currency])
   @@index([householdId])
   @@index([householdId, month])
   @@map("budgets")
@@ -371,6 +430,7 @@ model RecurringTransaction {
   amount       Decimal             @db.Decimal(15, 2)
   description  String?
   frequency    RecurrenceFrequency
+  timeZone     String              @default("UTC") @map("time_zone") @db.VarChar(64)
   startDate    DateTime            @map("start_date") @db.Date
   endDate      DateTime?           @map("end_date") @db.Date
   nextRunAt    DateTime            @map("next_run_at") @db.Date
@@ -383,6 +443,7 @@ model RecurringTransaction {
   household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
   account      Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
   transactions Transaction[]
+  occurrences  RecurringOccurrence[]
 
   // Indexes
   // REGRA DE NEGÓCIO: Índice em nextRunAt para otimizar busca do cronjob
@@ -391,6 +452,77 @@ model RecurringTransaction {
   @@index([nextRunAt])
   @@index([isActive, nextRunAt])
   @@map("recurring_transactions")
+}
+
+model RecurringOccurrence {
+  id                    String   @id @default(uuid()) @db.Uuid
+  recurringTransactionId String  @map("recurring_transaction_id") @db.Uuid
+  occurrenceDate         DateTime @map("occurrence_date") @db.Date
+  transactionId          String   @unique @map("transaction_id") @db.Uuid
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  recurringTransaction RecurringTransaction @relation(fields: [recurringTransactionId], references: [id], onDelete: Cascade)
+  transaction          Transaction          @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@unique([recurringTransactionId, occurrenceDate])
+  @@index([occurrenceDate])
+  @@map("recurring_occurrences")
+}
+
+model CreditCardInvoice {
+  id            String        @id @default(uuid()) @db.Uuid
+  householdId   String        @map("household_id") @db.Uuid
+  cardAccountId String        @map("card_account_id") @db.Uuid
+  periodStart   DateTime      @map("period_start") @db.Date
+  periodEnd     DateTime      @map("period_end") @db.Date
+  dueDate       DateTime      @map("due_date") @db.Date
+  status        InvoiceStatus @default(OPEN)
+  currency      String        @db.VarChar(3)
+  totalAmount   Decimal       @default(0) @map("total_amount") @db.Decimal(15, 2)
+  closedAt      DateTime?     @map("closed_at") @db.Timestamptz(3)
+  paidAt        DateTime?     @map("paid_at") @db.Timestamptz(3)
+  version       Int           @default(1)
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+
+  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  card      Account       @relation(fields: [cardAccountId], references: [id], onDelete: Cascade)
+  charges   Transaction[] @relation("InvoiceCharges")
+  payments  InvoicePayment[]
+
+  @@unique([cardAccountId, periodStart])
+  @@index([householdId, periodStart])
+  @@index([cardAccountId, periodEnd])
+  @@map("credit_card_invoices")
+}
+
+model InvoicePayment {
+  id            String   @id @default(uuid()) @db.Uuid
+  invoiceId     String   @map("invoice_id") @db.Uuid
+  transactionId String   @unique @map("transaction_id") @db.Uuid
+  amount        Decimal  @db.Decimal(15, 2)
+  refundedAt    DateTime? @map("refunded_at") @db.Timestamptz(3)
+  refundTransactionId String? @unique @map("refund_transaction_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  invoice     CreditCardInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  transaction Transaction       @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  refundTransaction Transaction? @relation("InvoiceRefund", fields: [refundTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([invoiceId])
+  @@map("invoice_payments")
+}
+
+model InvoiceMigrationIssue {
+  id            String   @id @default(uuid()) @db.Uuid
+  transactionId String   @unique @map("transaction_id") @db.Uuid
+  reason        String   @db.VarChar(64)
+  legacyValue   String   @map("legacy_value") @db.Text
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  @@map("invoice_migration_issues")
 }
 
 // ============================================================================

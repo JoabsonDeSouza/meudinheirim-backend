@@ -1,3 +1,7 @@
+import type { AccountType as Prisma_AccountType } from '../../generated/prisma/enums.js';
+import type { AccountStatus as Prisma_AccountStatus } from '../../generated/prisma/enums.js';
+import type { TransactionType as Prisma_TransactionType } from '../../generated/prisma/enums.js';
+
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
 import { NotFoundError, BadRequestError } from '../../shared/errors/index.js';
@@ -14,7 +18,7 @@ import type {
 /**
  * Create a new account
  */
-export async function createAccount(input: CreateAccountInput) {
+export async function createAccount(input: CreateAccountInput): Promise<{ balance: number; totalBalance: number; availableBalance: number; allocatedBalance: number; creditLimit: number | null; id: string; name: string; type: Prisma_AccountType; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }> {
   // householdId must be provided (resolved in routes via ensurePersonalHousehold)
   if (!input.householdId) {
     throw new BadRequestError('householdId is required');
@@ -68,6 +72,10 @@ export async function createAccount(input: CreateAccountInput) {
       availableBalance: availableBalance, // Saldo disponível
       allocatedBalance: allocatedBalance, // Saldo alocado (sempre 0 na criação)
       currency: input.currency,
+      ...(input.institution !== undefined && { institution: input.institution }),
+      ...(input.brand !== undefined && { brand: input.brand }),
+      ...(input.cardNetwork !== undefined && { cardNetwork: input.cardNetwork }),
+      ...(input.last4 !== undefined && { last4: input.last4 }),
       ...(accountColor && { color: accountColor }),
       ...(input.icon && { icon: input.icon }),
       ...(input.creditLimit && { creditLimit: new Prisma.Decimal(input.creditLimit) }),
@@ -97,7 +105,7 @@ export async function createAccount(input: CreateAccountInput) {
 /**
  * Get account by ID
  */
-export async function getAccount(accountId: string) {
+export async function getAccount(accountId: string): Promise<{ balance: number; creditLimit: number | null; _count: { transactions: number; }; id: string; name: string; type: Prisma_AccountType; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }> {
   const account = await prisma.account.findUnique({
     where: { id: accountId },
     include: {
@@ -124,7 +132,7 @@ export async function getAccount(accountId: string) {
 /**
  * Get account with household verification
  */
-export async function getAccountWithHousehold(accountId: string, householdId: string) {
+export async function getAccountWithHousehold(accountId: string, householdId: string): Promise<{ balance: number; creditLimit: number | null; id: string; name: string; type: Prisma_AccountType; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }> {
   const account = await prisma.account.findFirst({
     where: {
       id: accountId,
@@ -144,11 +152,18 @@ export async function getAccountWithHousehold(accountId: string, householdId: st
   };
 }
 
+type AccountWithCount = Awaited<ReturnType<typeof prisma.account.findMany>>[number];
+type MappedAccountWithOwner = Omit<AccountWithCount, 'balance' | 'creditLimit'> & {
+  accountOwnerId: string;
+  balance: number;
+  creditLimit: number | null;
+};
+
 /**
  * List accounts for a household
  * Includes shared personal accounts when in a shared household
  */
-export async function listAccounts(query: ListAccountsQuery, userId?: string) {
+export async function listAccounts(query: ListAccountsQuery, userId?: string): Promise<{ accounts: ({ balance: number; creditLimit: number | null; isPersonal: boolean; accountOwnerId: string | null; _count: { transactions: number; }; id: string; name: string; type: Prisma_AccountType; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; } | { balance: number; creditLimit: number | null; isPersonal: boolean; accountOwnerId: string | null; id: string; name: string; type: Prisma_AccountType; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; })[]; totals: { currency: string; amount: number; }[]; }> {
   const { householdId, includeInactive } = query;
 
   // Get household accounts
@@ -168,7 +183,7 @@ export async function listAccounts(query: ListAccountsQuery, userId?: string) {
   });
 
   // If userId is provided and this is a shared household, include shared personal accounts
-  let sharedAccounts: Array<typeof householdAccounts[0] & { accountOwnerId: string; isPersonal: boolean }> = [];
+  const sharedAccounts: Array<AccountWithCount & { accountOwnerId: string; isPersonal: boolean }> = [];
   if (userId) {
     // Get user's personal household (oldest household)
     const userMemberships = await prisma.householdMember.findMany({
@@ -182,19 +197,6 @@ export async function listAccounts(query: ListAccountsQuery, userId?: string) {
     const isSharedHousehold = personalHousehold && personalHousehold.id !== householdId;
 
     if (isSharedHousehold && personalHousehold) {
-      // Get current user's membership to check their shared accounts
-      const currentUserMembership = await prisma.householdMember.findFirst({
-        where: {
-          householdId,
-          userId,
-        },
-        select: { 
-          userId: true, 
-          allowPersonalAccountAccess: true,
-          sharedAccountIds: true,
-        },
-      });
-
       // Get all household members (including current user)
       const allHouseholdMembers = await prisma.householdMember.findMany({
         where: {
@@ -223,8 +225,6 @@ export async function listAccounts(query: ListAccountsQuery, userId?: string) {
       // Get shared accounts from each member (including current user's own shared accounts)
       for (const member of membersWithAccess) {
         const sharedIds = member.sharedAccountIds;
-        const hasSpecificSharedAccounts = Array.isArray(sharedIds) && sharedIds.length > 0 && sharedIds.every((id: unknown) => typeof id === 'string');
-
         // Get member's personal household
         const memberPersonalHousehold = await prisma.householdMember.findFirst({
           where: { userId: member.userId },
@@ -263,7 +263,7 @@ export async function listAccounts(query: ListAccountsQuery, userId?: string) {
             ...acc,
             accountOwnerId: member.userId,
             isPersonal: true,
-          } as typeof householdAccounts[0] & { accountOwnerId: string; isPersonal: boolean });
+          } as AccountWithCount & { accountOwnerId: string; isPersonal: boolean });
         }
       }
     }
@@ -299,8 +299,8 @@ export async function listAccounts(query: ListAccountsQuery, userId?: string) {
       ...account,
       balance: account.balance.toNumber(),
       creditLimit: account.creditLimit ? account.creditLimit.toNumber() : null,
-      isPersonal: (account as any).isPersonal || false,
-      accountOwnerId: (account as any).accountOwnerId || null,
+      isPersonal: account.isPersonal || false,
+      accountOwnerId: account.accountOwnerId || null,
     })),
     totals: Object.entries(totals).map(([currency, amount]: [string, Prisma.Decimal]) => ({
       currency,
@@ -316,7 +316,7 @@ export async function listAccounts(query: ListAccountsQuery, userId?: string) {
  * @param userId The user ID requesting accounts
  * @param includeInactive Whether to include inactive accounts
  */
-export async function listAvailableAccounts(householdId: string, userId: string, includeInactive = false) {
+export async function listAvailableAccounts(householdId: string, userId: string, includeInactive = false): Promise<{ accounts: ({ isPersonal: boolean; accountOwnerId: string | undefined; balance: number; creditLimit: number | null; household: { id: string; name: string; }; _count: { transactions: number; }; id: string; name: string; type: Prisma_AccountType; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; } | { isPersonal: boolean; accountOwnerId: string; id: string; name: string; type: Prisma_AccountType; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; balance: number; creditLimit: number | null; })[]; hasPersonalAccounts: boolean; }> {
   // Get all accounts from the household
   const householdAccounts = await prisma.account.findMany({
     where: {
@@ -349,7 +349,7 @@ export async function listAvailableAccounts(householdId: string, userId: string,
 
   // If this is a shared household, include shared personal accounts (from all members including current user)
   // Only include accounts that are explicitly shared via sharedAccountIds
-  let sharedPersonalAccounts: Array<typeof householdAccounts[0] & { accountOwnerId: string }> = [];
+  const sharedPersonalAccounts: Array<MappedAccountWithOwner> = [];
   if (isSharedHousehold && personalHousehold) {
     // Get all household members (including current user) to check their shared accounts
     const allHouseholdMembers = await prisma.householdMember.findMany({
@@ -376,10 +376,7 @@ export async function listAvailableAccounts(householdId: string, userId: string,
 
     // Process each member separately to respect their sharedAccountIds selection
     for (const member of membersWithAccess) {
-      // Check if member has specific account IDs shared (new feature)
       const sharedIds = member.sharedAccountIds;
-      const hasSpecificSharedAccounts = Array.isArray(sharedIds) && sharedIds.length > 0 && sharedIds.every((id: unknown) => typeof id === 'string');
-
       // Get personal household of this member
       const memberPersonalHousehold = await prisma.householdMember.findFirst({
         where: { userId: member.userId },
@@ -417,14 +414,13 @@ export async function listAvailableAccounts(householdId: string, userId: string,
 
       // Map accounts to their owner and convert Prisma.Decimal to number
       for (const acc of accounts) {
-        const mappedAccount = {
+        const mappedAccount: MappedAccountWithOwner = {
           ...acc,
           accountOwnerId: member.userId,
           balance: acc.balance.toNumber(),
           creditLimit: acc.creditLimit ? acc.creditLimit.toNumber() : null,
         };
-        // Type assertion needed because we're converting Prisma.Decimal to number
-        sharedPersonalAccounts.push(mappedAccount as unknown as typeof householdAccounts[0] & { accountOwnerId: string });
+        sharedPersonalAccounts.push(mappedAccount);
       }
     }
   }
@@ -458,7 +454,7 @@ export async function listAvailableAccounts(householdId: string, userId: string,
 /**
  * Update account
  */
-export async function updateAccount(accountId: string, householdId: string, input: UpdateAccountInput) {
+export async function updateAccount(accountId: string, householdId: string, input: UpdateAccountInput): Promise<{ balance: number; creditLimit: number | null; id: string; name: string; type: Prisma_AccountType; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }> {
   // Buscar conta atual para verificar tipo
   const currentAccount = await prisma.account.findFirst({
     where: { id: accountId, householdId },
@@ -503,9 +499,14 @@ export async function updateAccount(accountId: string, householdId: string, inpu
     }
   }
 
-  const updateData: any = {
+  const updateData: Prisma.AccountUpdateInput = {
     ...(input.name !== undefined && { name: input.name }),
     ...(input.type !== undefined && { type: input.type }),
+    ...(input.currency !== undefined && { currency: input.currency }),
+    ...(input.institution !== undefined && { institution: input.institution }),
+    ...(input.brand !== undefined && { brand: input.brand }),
+    ...(input.cardNetwork !== undefined && { cardNetwork: input.cardNetwork }),
+    ...(input.last4 !== undefined && { last4: input.last4 }),
     ...(input.balance !== undefined && { balance: new Prisma.Decimal(input.balance) }), // Permitir atualização direta (usado para pagamento de fatura)
     ...(input.isActive !== undefined && { isActive: input.isActive }),
     ...(accountColor !== undefined && { color: accountColor }),
@@ -516,7 +517,11 @@ export async function updateAccount(accountId: string, householdId: string, inpu
     ...(input.dueDay !== undefined && { dueDay: input.dueDay }),
     ...(input.closingDay !== undefined && { closingDay: input.closingDay }),
     ...(input.bestDayOffset !== undefined && { bestDayOffset: input.bestDayOffset }),
-    ...(input.linkedAccountId !== undefined && { linkedAccountId: input.linkedAccountId }),
+    ...(input.linkedAccountId !== undefined && {
+      linkedAccount: input.linkedAccountId
+        ? { connect: { id: input.linkedAccountId } }
+        : { disconnect: true },
+    }),
   };
 
   // If account type is not credit, remove credit-specific fields
@@ -525,7 +530,7 @@ export async function updateAccount(accountId: string, householdId: string, inpu
     updateData.dueDay = null;
     updateData.closingDay = null;
     updateData.bestDayOffset = null;
-    updateData.linkedAccountId = null;
+    updateData.linkedAccount = { disconnect: true };
     updateData.totalLimit = null;
   }
 
@@ -582,7 +587,7 @@ export async function updateAccount(accountId: string, householdId: string, inpu
  * references this account (via accountId, fromAccountId or toAccountId) inside the same
  * DB transaction, so no orphaned records are left behind.
  */
-export async function deleteAccount(accountId: string, deleteTransactions = false) {
+export async function deleteAccount(accountId: string, deleteTransactions = false): Promise<{ id: string; householdId: string; deletedTransactions: number; }> {
   const account = await prisma.account.findUnique({
     where: { id: accountId },
   });
@@ -637,7 +642,7 @@ export async function deleteAccount(accountId: string, deleteTransactions = fals
 export async function transferBetweenAccounts(
   householdId: string,
   input: TransferInput
-) {
+): Promise<{ fromAccount: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; toAccount: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; transactions: { id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }[]; }> {
   const { fromAccountId, toAccountId, amount, description } = input;
 
   if (fromAccountId === toAccountId) {
@@ -742,7 +747,7 @@ export async function adjustBalance(
   accountId: string,
   householdId: string,
   input: AdjustBalanceInput
-) {
+): Promise<{ account: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; adjustment: { id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }; } | { account: { id: string; name: string; type: Prisma_AccountType; balance: Prisma.Decimal; currency: string; isActive: boolean; status: Prisma_AccountStatus; color: string | null; icon: string | null; totalBalance: Prisma.Decimal; availableBalance: Prisma.Decimal; allocatedBalance: Prisma.Decimal; creditLimit: Prisma.Decimal | null; totalLimit: Prisma.Decimal | null; availableLimit: Prisma.Decimal | null; dueDay: number | null; closingDay: number | null; bestDayOffset: number | null; createdAt: Date; updatedAt: Date; householdId: string; linkedAccountId: string | null; }; adjustment: null; }> {
   const account = await prisma.account.findFirst({
     where: { id: accountId, householdId },
   });
@@ -804,7 +809,7 @@ export async function adjustBalance(
 /**
  * Get account summary for a household
  */
-export async function getAccountsSummary(householdId: string) {
+export async function getAccountsSummary(householdId: string): Promise<{ totalAccounts: number; byType: Record<string, { count: number; total: number; }>; byCurrency: Record<string, number>; }> {
   const accounts = await prisma.account.findMany({
     where: { householdId, isActive: true },
   });
@@ -832,7 +837,6 @@ export async function getAccountsSummary(householdId: string) {
 
   return summary;
 }
-
 
 
 

@@ -1,121 +1,26 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
-import { ZodError } from 'zod';
-import { AppError, ValidationError } from './app-error.js';
-import { isProduction } from '../config/env.js';
+import { toPublicErrorResult } from './public-error.js';
 
-interface ErrorResponse {
-  success: false;
-  error: {
-    code: string;
-    message: string;
-    details?: Record<string, string[]>;
-    stack?: string;
-  };
-}
-
-/**
- * Centralized error handler for Fastify
- * Converts all errors to a consistent format
- */
+/** Public errors are stable and never contain stack traces or raw payload data. */
 export function errorHandler(
   error: FastifyError | Error,
   request: FastifyRequest,
-  reply: FastifyReply
+  reply: FastifyReply,
 ): void {
-  // Log error for debugging
-  request.log.error(error);
+  const errorCode = 'code' in error && typeof error.code === 'string' ? error.code : 'UNCLASSIFIED';
+  request.log.error(
+    { requestId: request.id, errorName: error.name, errorCode },
+    'Request failed',
+  );
 
-  // Handle JSON parsing errors (SyntaxError from JSON.parse)
   if (error.name === 'SyntaxError' && error.message.includes('JSON')) {
-    const response: ErrorResponse = {
+    reply.status(400).send({
       success: false,
-      error: {
-        code: 'BAD_REQUEST',
-        message: 'Invalid JSON in request body',
-        ...(!isProduction && { 
-          details: { 
-            _root: [error.message] 
-          } 
-        }),
-      },
-    };
-    reply.status(400).send(response);
+      error: { code: 'BAD_REQUEST', message: 'Invalid JSON in request body', requestId: request.id },
+    });
     return;
   }
 
-  // Handle Zod validation errors
-  if (error instanceof ZodError) {
-    const details = formatZodError(error);
-    const response: ErrorResponse = {
-      success: false,
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: 'Validation failed',
-        details,
-      },
-    };
-    reply.status(400).send(response);
-    return;
-  }
-
-  // Handle custom AppError
-  if (error instanceof AppError) {
-    const response: ErrorResponse = {
-      success: false,
-      error: {
-        code: error.code,
-        message: error.message,
-        ...(error instanceof ValidationError && { details: error.details }),
-        ...(!isProduction && { stack: error.stack }),
-      },
-    };
-    reply.status(error.statusCode).send(response);
-    return;
-  }
-
-  // Handle Fastify validation errors (from schema validation)
-  if ('validation' in error && error.validation) {
-    const response: ErrorResponse = {
-      success: false,
-      error: {
-        code: 'VALIDATION_ERROR',
-        message: error.message || 'Validation failed',
-      },
-    };
-    reply.status(400).send(response);
-    return;
-  }
-
-  // Handle unknown errors (return generic message in production)
-  const response: ErrorResponse = {
-    success: false,
-    error: {
-      code: 'INTERNAL_ERROR',
-      message: isProduction ? 'An unexpected error occurred' : error.message,
-      ...(!isProduction && { stack: error.stack }),
-    },
-  };
-  reply.status(500).send(response);
+  const result = toPublicErrorResult(error, request.id);
+  reply.status(result.statusCode).send(result.body);
 }
-
-/**
- * Format Zod errors into a user-friendly structure
- */
-function formatZodError(error: ZodError): Record<string, string[]> {
-  const details: Record<string, string[]> = {};
-
-  for (const issue of error.issues) {
-    const path = issue.path.join('.') || '_root';
-    if (!details[path]) {
-      details[path] = [];
-    }
-    details[path].push(issue.message);
-  }
-
-  return details;
-}
-
-
-
-
-

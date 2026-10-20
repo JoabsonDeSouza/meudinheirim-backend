@@ -1,8 +1,12 @@
+import type { NotificationType as Prisma_NotificationType } from '../../generated/prisma/enums.js';
+import type { NotificationStatus as Prisma_NotificationStatus } from '../../generated/prisma/enums.js';
+
 import { prisma } from '../../shared/db/prisma.js';
 import { NotificationType } from './notifications.schema.js';
 import { createNotification } from './notifications.service.js';
-import { Prisma } from '../../generated/prisma/client.js';
-import { CategoryName, CATEGORY_NAME_DISPLAY } from '../../shared/enums/index.js';
+import { type Prisma } from '../../generated/prisma/client.js';
+import { type CategoryName, CATEGORY_NAME_DISPLAY } from '../../shared/enums/index.js';
+import { asNotificationMetadata } from '../../shared/utils/notification-metadata.js';
 import { isCustomCategoryName, toCustomCategoryId } from '../../shared/utils/categoryHelpers.js';
 
 /**
@@ -15,7 +19,7 @@ export async function checkBudgetThresholds(
   transactionDate: Date,
   transactionAmount: number,
   transactionType: 'INCOME' | 'EXPENSE'
-) {
+): Promise<{ id: string; type: Prisma_NotificationType; status: Prisma_NotificationStatus; createdAt: Date; updatedAt: Date; message: string; userId: string; expiresAt: Date | null; title: string; metadata: Prisma.JsonValue | null; deepLink: string | null; readAt: Date | null; archivedAt: Date | null; }[] | undefined> {
   // Only check expenses (budgets are for expenses)
   if (transactionType !== 'EXPENSE') {
     return;
@@ -94,14 +98,14 @@ export async function checkBudgetThresholds(
 
   // Filter notifications for this specific budget and check thresholds
   const budgetNotifications = existingNotifications.filter((n) => {
-    const metadata = n.metadata as any;
-    return metadata && typeof metadata === 'object' && metadata.budgetId === budget.id;
+    const metadata = asNotificationMetadata(n.metadata);
+    return metadata?.budgetId === budget.id;
   });
 
   // Check which thresholds have already been notified
   const notifiedPercentages = budgetNotifications
     .map((n) => {
-      const metadata = n.metadata as any;
+      const metadata = asNotificationMetadata(n.metadata);
       return metadata?.percentage;
     })
     .filter((p): p is number => typeof p === 'number');
@@ -158,7 +162,7 @@ export async function checkBudgetThresholds(
           });
           notifications.push(notification);
         } catch (error) {
-          console.error(`[checkBudgetThresholds] Error creating 75% notification for user ${member.user.id}:`, error);
+          console.error('[checkBudgetThresholds] Notification creation failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
         }
       }
     }
@@ -193,7 +197,7 @@ export async function checkBudgetThresholds(
           });
           notifications.push(notification);
         } catch (error) {
-          console.error(`[checkBudgetThresholds] Error creating 100% notification for user ${member.user.id}:`, error);
+          console.error('[checkBudgetThresholds] Notification creation failed', { errorName: error instanceof Error ? error.name : 'UnknownError' });
         }
       }
     }

@@ -14,7 +14,7 @@ import {
 } from './savings-goals.schema.js';
 import * as savingsGoalsService from './savings-goals.service.js';
 
-export async function savingsGoalRoutes(app: FastifyInstance) {
+export async function savingsGoalRoutes(app: FastifyInstance): Promise<void> {
   // All routes require authentication
   app.addHook('preHandler', authMiddleware());
 

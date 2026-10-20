@@ -11,7 +11,7 @@ import type {
 /**
  * Create a new savings goal
  */
-export async function createSavingsGoal(input: CreateSavingsGoalInput) {
+export async function createSavingsGoal(input: CreateSavingsGoalInput): Promise<{ targetAmount: number; currentAmount: number; id: string; name: string; createdAt: Date; updatedAt: Date; householdId: string; accountId: string | null; targetDate: Date | null; }> {
   // householdId must be provided (resolved in routes via ensurePersonalHousehold)
   if (!input.householdId) {
     throw new BadRequestError('householdId is required');
@@ -57,7 +57,7 @@ export async function createSavingsGoal(input: CreateSavingsGoalInput) {
 /**
  * Get savings goal by ID
  */
-export async function getSavingsGoal(goalId: string) {
+export async function getSavingsGoal(goalId: string): Promise<{ targetAmount: number; currentAmount: number; id: string; name: string; createdAt: Date; updatedAt: Date; householdId: string; accountId: string | null; targetDate: Date | null; }> {
   const goal = await prisma.savingsGoal.findUnique({
     where: { id: goalId },
   });
@@ -77,7 +77,7 @@ export async function getSavingsGoal(goalId: string) {
 /**
  * List savings goals for a household
  */
-export async function listSavingsGoals(query: ListSavingsGoalsQuery) {
+export async function listSavingsGoals(query: ListSavingsGoalsQuery): Promise<{ targetAmount: number; currentAmount: number; remaining: number; percentage: number; isCompleted: boolean; id: string; name: string; targetDate: Date | null; accountId: string | null; householdId: string; createdAt: Date; updatedAt: Date; }[]> {
   const { householdId } = query;
 
   const goals = await prisma.savingsGoal.findMany({
@@ -109,7 +109,7 @@ export async function listSavingsGoals(query: ListSavingsGoalsQuery) {
 /**
  * Update savings goal
  */
-export async function updateSavingsGoal(goalId: string, input: UpdateSavingsGoalInput) {
+export async function updateSavingsGoal(goalId: string, input: UpdateSavingsGoalInput): Promise<{ targetAmount: number; currentAmount: number; id: string; name: string; createdAt: Date; updatedAt: Date; householdId: string; accountId: string | null; targetDate: Date | null; }> {
   const existingGoal = await prisma.savingsGoal.findUnique({
     where: { id: goalId },
   });
@@ -168,7 +168,7 @@ export async function addToSavingsGoal(
   goalId: string,
   householdId: string,
   input: AddToSavingsGoalInput
-) {
+): Promise<{ id: string; name: string; createdAt: Date; updatedAt: Date; householdId: string; accountId: string | null; targetAmount: Prisma.Decimal; currentAmount: Prisma.Decimal; targetDate: Date | null; }> {
   const goal = await prisma.savingsGoal.findFirst({
     where: { id: goalId, householdId },
   });
@@ -199,7 +199,7 @@ export async function addToSavingsGoal(
 /**
  * Delete savings goal
  */
-export async function deleteSavingsGoal(goalId: string) {
+export async function deleteSavingsGoal(goalId: string): Promise<{ deleted: boolean; }> {
   const goal = await prisma.savingsGoal.findUnique({
     where: { id: goalId },
   });

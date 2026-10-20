@@ -37,7 +37,7 @@ function hasRoleLevel(userRole: HouseholdRole, requiredRole: HouseholdRole): boo
  * Creates user if doesn't exist (for first login)
  * Handles case where user exists with same email but different firebaseUid
  */
-export async function getUserByFirebaseUid(firebaseUid: string, email: string) {
+export async function getUserByFirebaseUid(firebaseUid: string, email: string): Promise<{ id: string; createdAt: Date; updatedAt: Date; email: string; firebaseUid: string; displayName: string | null; isPremium: boolean; onboardingCompleted: boolean; onboardingRestartedAt: Date | null; theme: string | null; baseCurrency: string | null; locale: string | null; country: string | null; referralCode: string | null; dashboardPreferences: Prisma.JsonValue | null; lastRecurringProcessedMonth: string | null; lastRecurringProcessedAt: Date | null; preferencesUpdatedAt: Date | null; }> {
   // Validate email - must be a non-empty string
   if (!email || email.trim() === '') {
     throw new Error('Email is required to create user');
@@ -45,40 +45,38 @@ export async function getUserByFirebaseUid(firebaseUid: string, email: string) {
 
   const trimmedEmail = email.trim();
 
-  // First, try to find user by firebaseUid
-  let user = await prisma.user.findUnique({
-    where: { firebaseUid },
-  });
+  // Serialize concurrent first-logins for the same identity: exactly one
+  // transaction may create/update the user row.
+  const created = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`user-uid:${firebaseUid}`}))`;
 
-  if (user) {
-    return user;
-  }
+    const byEmail = await tx.user.findUnique({ where: { email: trimmedEmail } });
+    if (byEmail && byEmail.firebaseUid === firebaseUid) {
+      return byEmail;
+    }
 
-  // If not found by firebaseUid, check if user exists with same email
-  // This can happen if Firebase UID changed or there's data inconsistency
-  const existingUserByEmail = await prisma.user.findUnique({
-    where: { email: trimmedEmail },
-  });
+    const byUid = await tx.user.findUnique({ where: { firebaseUid } });
+    if (byUid) {
+      return byUid;
+    }
 
-  if (existingUserByEmail) {
-    // Update the existing user's firebaseUid to match current Firebase auth
-    // This handles cases where Firebase UID changed or was updated
-    user = await prisma.user.update({
-      where: { id: existingUserByEmail.id },
-      data: { firebaseUid },
+    if (byEmail) {
+      // Same email, different Firebase UID: rebind the row.
+      return tx.user.update({
+        where: { id: byEmail.id },
+        data: { firebaseUid },
+      });
+    }
+
+    return tx.user.create({
+      data: {
+        firebaseUid,
+        email: trimmedEmail,
+      },
     });
-    return user;
-  }
-
-  // User doesn't exist, create new one
-  user = await prisma.user.create({
-    data: {
-      firebaseUid,
-      email: trimmedEmail,
-    },
   });
 
-  return user;
+  return created;
 }
 
 /**
@@ -183,7 +181,7 @@ export async function requireEditor(
 /**
  * Get user's accessible households
  */
-export async function getUserHouseholds(userId: string) {
+export async function getUserHouseholds(userId: string): Promise<{ id: string; name: string; createdAt: Date; updatedAt: Date; role: HouseholdRole; joinedAt: Date; }[]> {
   const memberships = await prisma.householdMember.findMany({
     where: { userId },
     include: {

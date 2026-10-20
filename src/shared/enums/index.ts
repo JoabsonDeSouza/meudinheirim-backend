@@ -173,7 +173,7 @@ export function getDefaultCategoriesByType(type: CategoryType): CategoryName[] {
  * Get color for category
  */
 export function getCategoryColor(categoryName: CategoryName): string {
-  const colorMap: Record<CategoryName, string> = {
+  const colorMap: Record<string, string> = {
     // Income categories
     [CategoryName.SALARY]: '#22C55E',
     [CategoryName.FREELANCE]: '#10B981',
@@ -202,5 +202,22 @@ export function getCategoryColor(categoryName: CategoryName): string {
     [CategoryName.ALLOCATION]: '#8B5CF6',
   };
   return colorMap[categoryName] || '#64748B';
+}
+
+/**
+ * Type-safe variant of {@link getCategoryColor} accepting any stored category
+ * label (system categories, pseudo-categories such as `GENERAL`, or custom names).
+ */
+export function getColorForCategory(categoryName: string): string {
+  return getCategoryColor(categoryName as CategoryName);
+}
+
+/**
+ * Type-safe membership check between a stored category label and a category type.
+ * Custom category codes (not part of {@link CategoryName}) always return false.
+ */
+export function isCategoryOfType(type: CategoryType, categoryName: string): boolean {
+  const categories: readonly string[] = getCategoriesByType(type);
+  return categories.includes(categoryName);
 }
 

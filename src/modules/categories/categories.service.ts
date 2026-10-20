@@ -1,3 +1,5 @@
+import type { CategoryType as Prisma_CategoryType } from '../../generated/prisma/enums.js';
+
 import { prisma } from '../../shared/db/prisma.js';
 import { NotFoundError, ConflictError, CategoryInUseError } from '../../shared/errors/index.js';
 import { toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
@@ -10,7 +12,7 @@ import type {
 /**
  * Create a custom category
  */
-export async function createCategory(input: CreateCategoryInput) {
+export async function createCategory(input: CreateCategoryInput): Promise<{ id: string; name: string; type: Prisma_CategoryType; color: string | null; icon: string | null; createdAt: Date; updatedAt: Date; householdId: string; }> {
   const existing = await prisma.category.findFirst({
     where: {
       householdId: input.householdId!,
@@ -37,7 +39,7 @@ export async function createCategory(input: CreateCategoryInput) {
 /**
  * Get custom category by ID (must belong to household)
  */
-export async function getCategory(categoryId: string, householdId: string) {
+export async function getCategory(categoryId: string, householdId: string): Promise<{ id: string; name: string; type: Prisma_CategoryType; color: string | null; icon: string | null; createdAt: Date; updatedAt: Date; householdId: string; }> {
   const category = await prisma.category.findFirst({
     where: { id: categoryId, householdId },
   });
@@ -52,7 +54,7 @@ export async function getCategory(categoryId: string, householdId: string) {
 /**
  * Find custom category by ID only (used by GET /:id to resolve householdId for auth)
  */
-export async function findCategoryById(categoryId: string) {
+export async function findCategoryById(categoryId: string): Promise<{ id: string; name: string; type: Prisma_CategoryType; color: string | null; icon: string | null; createdAt: Date; updatedAt: Date; householdId: string; } | null> {
   return prisma.category.findUnique({
     where: { id: categoryId },
   });
@@ -61,7 +63,7 @@ export async function findCategoryById(categoryId: string) {
 /**
  * List custom categories for a household
  */
-export async function listCategories(query: ListCategoriesQuery) {
+export async function listCategories(query: ListCategoriesQuery): Promise<{ id: string; name: string; type: Prisma_CategoryType; color: string | null; icon: string | null; createdAt: Date; updatedAt: Date; householdId: string; }[]> {
   const { householdId, type } = query;
 
   const categories = await prisma.category.findMany({
@@ -82,7 +84,7 @@ export async function updateCategory(
   categoryId: string,
   householdId: string,
   input: UpdateCategoryInput
-) {
+): Promise<{ id: string; name: string; type: Prisma_CategoryType; color: string | null; icon: string | null; createdAt: Date; updatedAt: Date; householdId: string; }> {
   const category = await prisma.category.findFirst({
     where: { id: categoryId, householdId },
   });
@@ -108,7 +110,7 @@ export async function updateCategory(
   return await prisma.category.update({
     where: { id: categoryId },
     data: {
-      ...(input.name != null && { name: input.name }),
+      ...(input.name !== undefined && input.name !== null && { name: input.name }),
       ...(input.icon !== undefined && { icon: input.icon }),
       ...(input.color !== undefined && { color: input.color }),
     },
@@ -118,7 +120,7 @@ export async function updateCategory(
 /**
  * Delete custom category only if not used in transactions, budgets, or recurring
  */
-export async function deleteCategory(categoryId: string, householdId: string) {
+export async function deleteCategory(categoryId: string, householdId: string): Promise<void> {
   const category = await prisma.category.findFirst({
     where: { id: categoryId, householdId },
   });

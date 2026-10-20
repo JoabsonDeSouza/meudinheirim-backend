@@ -7,23 +7,36 @@ import swaggerUi from '@fastify/swagger-ui';
 
 import { env, isProduction } from './shared/config/env.js';
 import { initializeFirebase } from './shared/config/firebase.js';
-import { connectDatabase, disconnectDatabase } from './shared/db/prisma.js';
+import { connectDatabase, disconnectDatabase, prisma } from './shared/db/prisma.js';
 import { runMigrations } from './shared/db/migrations.js';
 import { errorHandler } from './shared/errors/error-handler.js';
+import { isOriginAllowed, parseAllowedOrigins } from './shared/http/origin-policy.js';
+import { shouldEnableSwaggerUi } from './shared/http/swagger-policy.js';
+import { buildReadinessResult } from './shared/ops/readiness.js';
+import { hasCompleteFirebaseCredentials } from './shared/config/environment.js';
 
 // Routes
 import { authRoutes } from './modules/auth/index.js';
+import { authConfigRoutes } from './modules/auth/auth-config.routes.js';
 import { userRoutes } from './modules/users/index.js';
 import { householdRoutes } from './modules/households/index.js';
 import { accountRoutes } from './modules/accounts/index.js';
 import { categoryRoutes } from './modules/categories/index.js';
+import { categoryV1Routes } from './modules/categories/categories.v1.routes.js';
 import { transactionRoutes } from './modules/transactions/index.js';
+import { transactionV1Routes } from './modules/transactions/transactions.v1.routes.js';
+import { syncRoutes } from './modules/sync/sync.routes.js';
 import { budgetRoutes } from './modules/budgets/index.js';
+import { budgetV1Routes } from './modules/budgets/budgets.v1.routes.js';
 import { savingsGoalRoutes } from './modules/savings-goals/index.js';
 import { recurringTransactionRoutes } from './modules/recurring-transactions/index.js';
+import { recurringV1Routes } from './modules/recurring-transactions/recurring.v1.routes.js';
 import { feedbackRoutes } from './modules/feedback/index.js';
 import { notificationRoutes } from './modules/notifications/index.js';
 import { dashboardRoutes } from './modules/dashboard/index.js';
+import { dashboardV1Routes } from './modules/dashboard/dashboard.v1.routes.js';
+import { creditCardInvoiceV1Routes } from './modules/credit-cards/invoices.v1.routes.js';
+import { insightsV1Routes } from './modules/analytics/insights/insights.v1.routes.js';
 
 /**
  * Build the Fastify application
@@ -32,8 +45,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   console.log('🔨 Building Fastify application...');
   
   const app = Fastify({
+    bodyLimit: 256 * 1024,
     logger: {
       level: isProduction ? 'info' : 'debug',
+      redact: {
+        paths: ['req.headers.authorization', 'req.headers.cookie', 'req.body', 'res.headers.set-cookie'],
+        censor: '[REDACTED]',
+      },
       transport: isProduction
         ? undefined
         : {
@@ -78,6 +96,50 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
   console.log('✅ Health check endpoint registered at /health');
 
+  app.get('/ready', {
+    schema: {
+      description: 'Readiness check for database, authentication and migrations',
+      tags: ['Health'],
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            ready: { type: 'boolean' },
+            code: { type: 'string', enum: ['READY'] },
+          },
+          required: ['ready', 'code'],
+        },
+        503: {
+          type: 'object',
+          properties: {
+            ready: { type: 'boolean' },
+            code: { type: 'string', enum: ['NOT_READY'] },
+          },
+          required: ['ready', 'code'],
+        },
+      },
+    },
+  }, async (_request, reply) => {
+    let database = false;
+    let migrations = false;
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      database = true;
+      const rows = await prisma.$queryRaw<Array<{ ready: boolean }>>`
+        SELECT to_regclass('public._prisma_migrations') IS NOT NULL AS ready
+      `;
+      migrations = rows[0]?.ready === true;
+    } catch {
+      // Readiness response deliberately omits internal dependency errors.
+    }
+    const result = buildReadinessResult({
+      database,
+      migrations,
+      auth: hasCompleteFirebaseCredentials(env),
+    });
+    return reply.code(result.ready ? 200 : 503).send(result);
+  });
+
   // ============================================================================
   // PLUGINS
   // ============================================================================
@@ -91,6 +153,25 @@ export async function buildApp(): Promise<FastifyInstance> {
         description: 'Personal finance backend with household collaboration support',
         version: '1.0.0',
       },
+      paths: {
+        '/health': {
+          get: {
+            tags: ['Health'],
+            summary: 'Liveness probe',
+            responses: { '200': { description: 'Process is alive' } },
+          },
+        },
+        '/ready': {
+          get: {
+            tags: ['Health'],
+            summary: 'Readiness probe',
+            responses: {
+              '200': { description: 'Dependencies are ready' },
+              '503': { description: 'One or more dependencies are not ready' },
+            },
+          },
+        },
+      },
       servers: [
         {
           url: isProduction
@@ -100,6 +181,118 @@ export async function buildApp(): Promise<FastifyInstance> {
         },
       ],
       components: {
+        schemas: {
+          MoneyDto: {
+            type: 'object',
+            required: ['minorUnits', 'currency'],
+            properties: {
+              minorUnits: { type: 'integer', minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
+              currency: { type: 'string', enum: ['BRL', 'USD'] },
+            },
+            additionalProperties: false,
+          },
+          TransactionV1Dto: {
+            type: 'object',
+            required: ['id', 'kind', 'amount', 'categoryCode', 'accountId', 'invoiceId', 'occurredAt', 'timeZone', 'note', 'paid', 'createdAt', 'updatedAt', 'deletedAt', 'version', 'clientMutationId'],
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              kind: { type: 'string', enum: ['expense', 'income'] },
+              amount: { $ref: '#/components/schemas/MoneyDto' },
+              categoryCode: { type: 'string' },
+              accountId: { type: 'string', format: 'uuid' },
+              invoiceId: { type: ['string', 'null'], format: 'uuid' },
+              occurredAt: { type: 'string', format: 'date-time' },
+              timeZone: { type: 'string' },
+              note: { type: ['string', 'null'] },
+              paid: { type: 'boolean' },
+              createdAt: { type: 'string', format: 'date-time' },
+              updatedAt: { type: 'string', format: 'date-time' },
+              deletedAt: { type: ['string', 'null'], format: 'date-time' },
+              version: { type: 'integer', minimum: 1 },
+              clientMutationId: { type: 'string', format: 'uuid' },
+            },
+            additionalProperties: false,
+          },
+          TransferV1Dto: {
+            type: 'object',
+            required: ['transaction', 'fromVersion', 'toVersion'],
+            properties: {
+              transaction: {
+                type: 'object',
+                required: ['id', 'kind', 'amount', 'fromAccountId', 'toAccountId', 'occurredAt', 'timeZone', 'note', 'version', 'clientMutationId'],
+                properties: {
+                  id: { type: 'string', format: 'uuid' },
+                  kind: { type: 'string', enum: ['transfer'] },
+                  amount: { $ref: '#/components/schemas/MoneyDto' },
+                  fromAccountId: { type: 'string', format: 'uuid' },
+                  toAccountId: { type: 'string', format: 'uuid' },
+                  occurredAt: { type: 'string', format: 'date-time' },
+                  timeZone: { type: 'string' },
+                  note: { type: ['string', 'null'] },
+                  version: { type: 'integer', minimum: 1 },
+                  clientMutationId: { type: 'string', format: 'uuid' },
+                },
+                additionalProperties: false,
+              },
+              fromVersion: { type: 'integer', minimum: 1 },
+              toVersion: { type: 'integer', minimum: 1 },
+            },
+            additionalProperties: false,
+          },
+          SyncChangeDto: {
+            type: 'object',
+            required: ['sequence', 'entityType', 'entityId', 'version', 'payload', 'deletedAt', 'createdAt'],
+            properties: {
+              sequence: { type: 'string', pattern: '^[1-9][0-9]*$' },
+              entityType: { type: 'string' },
+              entityId: { type: 'string', format: 'uuid' },
+              version: { type: 'integer', minimum: 1 },
+              payload: { type: 'object', additionalProperties: true },
+              deletedAt: { type: ['string', 'null'], format: 'date-time' },
+              createdAt: { type: 'string', format: 'date-time' },
+            },
+            additionalProperties: false,
+          },
+          CreditCardInvoiceV1Dto: {
+            type: 'object',
+            required: ['id', 'householdId', 'cardAccountId', 'periodStart', 'periodEnd', 'dueDate', 'status', 'totalAmount', 'closedAt', 'paidAt'],
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              householdId: { type: 'string', format: 'uuid' },
+              cardAccountId: { type: 'string', format: 'uuid' },
+              periodStart: { type: 'string', format: 'date' },
+              periodEnd: { type: 'string', format: 'date' },
+              dueDate: { type: 'string', format: 'date' },
+              status: { type: 'string', enum: ['OPEN', 'CLOSED', 'PAID'] },
+              totalAmount: { $ref: '#/components/schemas/MoneyDto' },
+              closedAt: { type: ['string', 'null'], format: 'date-time' },
+              paidAt: { type: ['string', 'null'], format: 'date-time' },
+            },
+            additionalProperties: false,
+          },
+          ApiErrorDto: {
+            type: 'object',
+            required: ['success', 'error'],
+            properties: {
+              success: { type: 'boolean', enum: [false] },
+              error: {
+                type: 'object',
+                required: ['code', 'message', 'requestId'],
+                properties: {
+                  code: { type: 'string' },
+                  message: { type: 'string' },
+                  requestId: { type: 'string' },
+                  fieldErrors: {
+                    type: 'object',
+                    additionalProperties: { type: 'array', items: { type: 'string' } },
+                  },
+                },
+                additionalProperties: false,
+              },
+            },
+            additionalProperties: false,
+          },
+        },
         securitySchemes: {
           bearerAuth: {
             type: 'http',
@@ -117,16 +310,19 @@ export async function buildApp(): Promise<FastifyInstance> {
         { name: 'Accounts', description: 'Account management endpoints' },
         { name: 'Categories', description: 'Transaction category endpoints' },
         { name: 'Transactions', description: 'Transaction management endpoints' },
+        { name: 'Credit Cards', description: 'Persisted billing cycles and invoices' },
         { name: 'Budgets', description: 'Budget management endpoints' },
         { name: 'Savings Goals', description: 'Savings goal endpoints' },
         { name: 'Recurring Transactions', description: 'Recurring transaction endpoints' },
         { name: 'Feedback', description: 'User feedback endpoints' },
+        { name: 'Sync', description: 'Idempotent mutations and change feed' },
       ],
     },
   });
 
   // Swagger UI with optional authentication
-  await app.register(swaggerUi, {
+  if (shouldEnableSwaggerUi(isProduction, env.SWAGGER_USERNAME, env.SWAGGER_PASSWORD)) {
+    await app.register(swaggerUi, {
     routePrefix: '/docs',
     uiConfig: {
       docExpansion: 'list',
@@ -161,63 +357,17 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
     staticCSP: true,
     transformStaticCSP: (header) => header,
-    transformSpecification: (swaggerObject, request, reply) => {
+    transformSpecification: (swaggerObject, _request, _reply) => {
       return swaggerObject;
     },
     transformSpecificationClone: true,
-  });
+    });
+  }
 
-  // CORS
-  // Allow localhost (any port) and any domain containing "meudinheirim.app"
+  // CORS: exact origins only. Native and command-line requests without Origin remain allowed.
   await app.register(cors, {
     origin: (origin, callback) => {
-      // Allow requests with no origin (like mobile apps or curl requests)
-      if (!origin) {
-        if (isProduction) {
-          console.log('[CORS] Allowing request with no origin');
-        }
-        callback(null, true);
-        return;
-      }
-      
-      // Allow localhost (any protocol, any port)
-      if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-        if (isProduction) {
-          console.log(`[CORS] Allowing localhost origin: ${origin}`);
-        }
-        callback(null, true);
-        return;
-      }
-      
-      // Allow any domain containing "meudinheirim.app"
-      if (origin.includes('meudinheirim.app')) {
-        if (isProduction) {
-          console.log(`[CORS] Allowing meudinheirim.app origin: ${origin}`);
-        }
-        callback(null, true);
-        return;
-      }
-      
-      // In development, allow all origins
-      if (!isProduction) {
-        callback(null, true);
-        return;
-      }
-      
-      // In production, check ALLOWED_ORIGINS env var for additional origins
-      const allowedOrigins = env.ALLOWED_ORIGINS;
-      if (allowedOrigins) {
-        const allowedList = allowedOrigins.split(',').map(o => o.trim()).filter(Boolean);
-        if (allowedList.includes(origin)) {
-          console.log(`[CORS] Allowing origin from ALLOWED_ORIGINS: ${origin}`);
-          callback(null, true);
-          return;
-        }
-      }
-      
-      // Reject if none of the above conditions match
-      console.warn(`[CORS] Rejecting origin: ${origin}`);
-      callback(new Error('Not allowed by CORS'), false);
+      callback(null, isOriginAllowed(origin, parseAllowedOrigins(env.ALLOWED_ORIGINS)));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -291,17 +441,34 @@ export async function buildApp(): Promise<FastifyInstance> {
   // ============================================================================
 
   await app.register(authRoutes, { prefix: '/auth' });
+  await app.register(authConfigRoutes, { prefix: '/auth' });
+  await app.register(authRoutes, { prefix: '/v1/auth' });
+  await app.register(authConfigRoutes, { prefix: '/v1/auth' });
   await app.register(userRoutes, { prefix: '/users' });
+  await app.register(userRoutes, { prefix: '/v1/users' });
   await app.register(householdRoutes, { prefix: '/households' });
+  await app.register(householdRoutes, { prefix: '/v1/households' });
   await app.register(accountRoutes, { prefix: '/accounts' });
+  await app.register(accountRoutes, { prefix: '/v1/accounts' });
   await app.register(categoryRoutes, { prefix: '/categories' });
+  await app.register(categoryV1Routes, { prefix: '/v1/categories' });
   await app.register(transactionRoutes, { prefix: '/transactions' });
+  await app.register(transactionV1Routes, { prefix: '/v1/transactions' });
+  await app.register(syncRoutes, { prefix: '/v1/sync' });
+  await app.register(creditCardInvoiceV1Routes, { prefix: '/v1/credit-cards' });
   await app.register(budgetRoutes, { prefix: '/budgets' });
+  await app.register(budgetV1Routes, { prefix: '/v1/budgets' });
   await app.register(savingsGoalRoutes, { prefix: '/savings-goals' });
+  await app.register(savingsGoalRoutes, { prefix: '/v1/savings-goals' });
   await app.register(recurringTransactionRoutes, { prefix: '/recurring-transactions' });
+  await app.register(recurringV1Routes, { prefix: '/v1/recurring-transactions' });
   await app.register(feedbackRoutes, { prefix: '/feedback' });
+  await app.register(feedbackRoutes, { prefix: '/v1/feedback' });
   await app.register(notificationRoutes, { prefix: '/notifications' });
+  await app.register(notificationRoutes, { prefix: '/v1/notifications' });
   await app.register(dashboardRoutes, { prefix: '/dashboard' });
+  await app.register(dashboardV1Routes, { prefix: '/v1/dashboard' });
+  await app.register(insightsV1Routes, { prefix: '/v1/insights' });
 
   return app;
 }
@@ -351,11 +518,9 @@ export async function startServer(): Promise<void> {
           await runMigrations();
           console.log('✅ Migrations completed successfully');
         } catch (error) {
-          console.error('❌ Failed to run migrations:', error);
-          if (error instanceof Error) {
-            console.error('Migration error details:', error.message);
-            console.error('Stack:', error.stack);
-          }
+          console.error('Migrations failed', {
+            errorName: error instanceof Error ? error.name : 'UnknownError',
+          });
           // Don't exit - allow server to start and respond to health checks
           // Migrations can be retried manually or on next deploy
           console.warn('⚠️  Server will continue running despite migration failure');
@@ -368,7 +533,9 @@ export async function startServer(): Promise<void> {
         initializeFirebase();
         console.log('✅ Firebase initialized');
       } catch (error) {
-        console.error('⚠️  Firebase initialization failed:', error);
+        console.error('Firebase initialization failed', {
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        });
         // Don't exit - server can still respond to health checks
       }
 
@@ -377,21 +544,21 @@ export async function startServer(): Promise<void> {
         await connectDatabase();
         console.log('✅ Database connected');
       } catch (error) {
-        console.error('⚠️  Database connection failed:', error);
+        console.error('Database connection failed', {
+          errorName: error instanceof Error ? error.name : 'UnknownError',
+        });
         // Don't exit - server can still respond to health checks
       }
     });
   } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    if (error instanceof Error) {
-      console.error('Error details:', error.message);
-      console.error('Stack:', error.stack);
-    }
+    console.error('Server startup failed', {
+      errorName: error instanceof Error ? error.name : 'UnknownError',
+    });
     process.exit(1);
   }
 
   // Graceful shutdown
-  const shutdown = async () => {
+  const shutdown = async (): Promise<void> => {
     console.log('\n📴 Shutting down gracefully...');
 
     if (app) {
@@ -406,4 +573,3 @@ export async function startServer(): Promise<void> {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 }
-

@@ -93,6 +93,12 @@ export class BadRequestError extends AppError {
   }
 }
 
+export class InvalidCursorError extends AppError {
+  constructor() {
+    super('Invalid pagination cursor', 400, 'INVALID_CURSOR');
+  }
+}
+
 /** 400: category is referenced by transactions, budgets or recurring (use code CATEGORY_IN_USE for i18n) */
 export class CategoryInUseError extends AppError {
   constructor(message: string = 'Category is in use') {
@@ -110,6 +116,30 @@ export class ConflictError extends AppError {
   }
 }
 
+export class VersionConflictError extends AppError {
+  constructor() {
+    super('Entity version is stale', 409, 'VERSION_CONFLICT');
+  }
+}
+
+export class IdempotencyConflictError extends AppError {
+  constructor() {
+    super('clientMutationId was reused with a different payload', 409, 'IDEMPOTENCY_CONFLICT');
+  }
+}
+
+export class InvoiceLifecycleRequiredError extends AppError {
+  constructor() {
+    super('Invoice actions require the persisted invoice lifecycle API', 410, 'INVOICE_LIFECYCLE_REQUIRED');
+  }
+}
+
+export class InvalidInvoiceTransitionError extends AppError {
+  constructor(from: string, action: string) {
+    super(`Cannot ${action} invoice in ${from} state`, 409, 'INVALID_INVOICE_TRANSITION');
+  }
+}
+
 // ============================================================================
 // RATE LIMIT ERRORS (429)
 // ============================================================================
@@ -119,10 +149,4 @@ export class RateLimitError extends AppError {
     super(message, 429, 'RATE_LIMIT_EXCEEDED');
   }
 }
-
-
-
-
-
-
 

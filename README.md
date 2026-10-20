@@ -29,9 +29,7 @@ You can run this backend on any Node.js host. Some options:
 - **[DigitalOcean App Platform](https://www.digitalocean.com/products/app-platform)** – managed app + DB
 - **VPS** (Hetzner, Linode, etc.) – run `npm run start` behind Nginx and use a managed PostgreSQL (e.g. Supabase, Neon, or self-hosted)
 
-Set `DATABASE_URL`, pick an [auth mode](#auth-mode) and, in production, `ALLOWED_ORIGINS` and optionally `SWAGGER_USERNAME`/`SWAGGER_PASSWORD`. For recurring transactions, schedule `npm run cron:process-recurrences` once per day (cron job or Railway cron).
-
-You don't need Firebase to run a working instance — `local` auth mode plus PostgreSQL is enough.
+Set `DATABASE_URL`, Firebase credentials and, in production, `ALLOWED_ORIGINS` and optionally `SWAGGER_USERNAME`/`SWAGGER_PASSWORD`. For recurring transactions, schedule `npm run cron:process-recurrences` once per day (cron job or Railway cron).
 
 ## How to run
 
@@ -58,21 +56,15 @@ Edit `.env`:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `DATABASE_URL` | Yes | PostgreSQL URL, e.g. `postgresql://user:password@localhost:5432/meudinheirim_dev` |
-| `AUTH_MODE` | Yes | `local` (no Firebase) or `firebase` (default). See below. |
 
 #### Auth mode
 
-Choose how users sign in via `AUTH_MODE`:
+Authentication is Firebase only. Firebase Admin verifies the ID token issued by the client
+(JavaScript SDK); email/password login is provided by Firebase Authentication itself.
 
-- **`local`** (recommended for self-host) — no third-party auth. The backend issues and verifies its
-  own JWTs for email/password login. Requires `AUTH_JWT_SECRET` (min 32 chars; generate with
-  `openssl rand -base64 48`). Optional: `AUTH_TOKEN_TTL_HOURS` (default 720 = 30 days),
-  `AUTH_REQUIRE_EMAIL_VERIFICATION` (default `false`). No Firebase setup needed.
-- **`firebase`** (default) — Google/Apple/Email sign-in via Firebase. Provide credentials with one of
-  the two options below. Optionally set the public `AUTH_FIREBASE_WEB_API_KEY` so `GET /auth/config`
-  hands the client your web config.
-
-Clients call `GET /auth/config` (public) to discover the mode before showing a login screen.
+Production instances MUST provide Firebase credentials — the server refuses to boot without
+them. Clients can call `GET /v1/auth/config` (public) to discover the auth mode before showing
+a login screen.
 
 **Firebase – option A (file):**
 

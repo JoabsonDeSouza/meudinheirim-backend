@@ -1,8 +1,10 @@
+import type { CategoryType as Prisma_CategoryType } from '../../generated/prisma/enums.js';
+
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
 import { NotFoundError, BadRequestError } from '../../shared/errors/index.js';
 import { parseMonthFilter } from '../../shared/utils/pagination.js';
-import { CategoryType, GENERAL_BUDGET_CATEGORY, getCategoriesByType, getCategoryColor } from '../../shared/enums/index.js';
+import { type CategoryType, GENERAL_BUDGET_CATEGORY, getColorForCategory, isCategoryOfType } from '../../shared/enums/index.js';
 import { isCustomCategoryName, toCustomCategoryId } from '../../shared/utils/categoryHelpers.js';
 import type {
   CreateBudgetInput,
@@ -14,7 +16,7 @@ import type {
 /**
  * Create a new budget
  */
-export async function createBudget(input: CreateBudgetInput) {
+export async function createBudget(input: CreateBudgetInput): Promise<{ monthlyLimit: number; id: string; type: Prisma_CategoryType; createdAt: Date; updatedAt: Date; householdId: string; categoryName: string; month: Date; }> {
   // householdId must be provided (resolved in routes via ensurePersonalHousehold)
   if (!input.householdId) {
     throw new BadRequestError('householdId is required');
@@ -33,8 +35,7 @@ export async function createBudget(input: CreateBudgetInput) {
       throw new BadRequestError(`Category does not match budget type (${type})`);
     }
   } else {
-    const categoriesByType = getCategoriesByType(type);
-    if (!categoriesByType.includes(categoryName as any)) {
+    if (!isCategoryOfType(type, categoryName)) {
       throw new BadRequestError(`Category ${categoryName} does not match budget type (${type})`);
     }
   }
@@ -80,7 +81,7 @@ export async function createBudget(input: CreateBudgetInput) {
 /**
  * Get budget by ID
  */
-export async function getBudget(budgetId: string) {
+export async function getBudget(budgetId: string): Promise<{ monthlyLimit: number; id: string; type: Prisma_CategoryType; createdAt: Date; updatedAt: Date; householdId: string; categoryName: string; month: Date; }> {
   const budget = await prisma.budget.findUnique({
     where: { id: budgetId },
   });
@@ -99,7 +100,7 @@ export async function getBudget(budgetId: string) {
 /**
  * List budgets for a household
  */
-export async function listBudgets(query: ListBudgetsQuery) {
+export async function listBudgets(query: ListBudgetsQuery): Promise<{ monthlyLimit: number; id: string; type: Prisma_CategoryType; createdAt: Date; updatedAt: Date; householdId: string; categoryName: string; month: Date; }[]> {
   const { householdId } = query;
 
   const budgets = await prisma.budget.findMany({
@@ -120,8 +121,8 @@ export async function listBudgets(query: ListBudgetsQuery) {
 /**
  * Update budget
  */
-export async function updateBudget(budgetId: string, input: UpdateBudgetInput) {
-  const updateData: any = {
+export async function updateBudget(budgetId: string, input: UpdateBudgetInput): Promise<{ monthlyLimit: number; id: string; type: Prisma_CategoryType; createdAt: Date; updatedAt: Date; householdId: string; categoryName: string; month: Date; }> {
+  const updateData: Prisma.BudgetUpdateInput = {
     ...(input.monthlyLimit !== undefined && {
       monthlyLimit: new Prisma.Decimal(input.monthlyLimit),
     }),
@@ -151,7 +152,7 @@ export async function updateBudget(budgetId: string, input: UpdateBudgetInput) {
 /**
  * Delete budget
  */
-export async function deleteBudget(budgetId: string) {
+export async function deleteBudget(budgetId: string): Promise<{ deleted: boolean; }> {
   const budget = await prisma.budget.findUnique({
     where: { id: budgetId },
   });
@@ -170,7 +171,7 @@ export async function deleteBudget(budgetId: string) {
 /**
  * Get budget summary with spending vs limit
  */
-export async function getBudgetSummary(query: BudgetSummaryQuery) {
+export async function getBudgetSummary(query: BudgetSummaryQuery): Promise<{ budgets: { budgetId: string; categoryName: string; categoryColor: string; monthlyLimit: number; spending: number; remaining: number; percentage: number; isOverBudget: boolean; }[]; totalLimit: number; totalSpending: number; }> {
   const { householdId, month, startDate, endDate } = query;
 
   // Build date filter
@@ -202,7 +203,7 @@ export async function getBudgetSummary(query: BudgetSummaryQuery) {
     if (isCustomCategoryName(categoryName)) {
       return customColorMap.get(toCustomCategoryId(categoryName)!) ?? '#64748B';
     }
-    return getCategoryColor(categoryName as any);
+    return getColorForCategory(categoryName);
   }
 
   // Get spending for each budget category

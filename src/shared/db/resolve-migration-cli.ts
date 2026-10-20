@@ -12,7 +12,7 @@
 import 'dotenv/config';
 import { resolveMigration, listFailedMigrations, autoResolveFailedMigrations } from './resolve-migration.js';
 
-async function main() {
+async function main(): Promise<void> {
   const args = process.argv.slice(2);
   
   if (args.length === 0 || args[0] === '--help' || args[0] === '-h') {
@@ -44,7 +44,7 @@ Examples:
         });
       }
     } catch (error) {
-      console.error('❌ Error listing failed migrations:', error);
+      console.error('Failed to list migrations', { errorName: error instanceof Error ? error.name : 'UnknownError' });
       process.exit(1);
     }
     return;
@@ -54,7 +54,7 @@ Examples:
     try {
       await autoResolveFailedMigrations();
     } catch (error) {
-      console.error('❌ Error auto-resolving migrations:', error);
+      console.error('Failed to auto-resolve migrations', { errorName: error instanceof Error ? error.name : 'UnknownError' });
       process.exit(1);
     }
     return;
@@ -73,7 +73,7 @@ Examples:
     try {
       await resolveMigration(migrationName, action);
     } catch (error) {
-      console.error('❌ Error resolving migration:', error);
+      console.error('Failed to resolve migration', { errorName: error instanceof Error ? error.name : 'UnknownError' });
       process.exit(1);
     }
     return;
@@ -85,7 +85,7 @@ Examples:
 }
 
 main().catch(error => {
-  console.error('❌ Unexpected error:', error);
+  console.error('Unexpected migration command failure', { errorName: error instanceof Error ? error.name : 'UnknownError' });
   process.exit(1);
 });
 

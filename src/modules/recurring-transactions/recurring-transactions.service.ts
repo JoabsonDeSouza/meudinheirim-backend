@@ -1,9 +1,16 @@
+import type { AccountType as Prisma_AccountType } from '../../generated/prisma/enums.js';
+import type { RecurrenceFrequency as Prisma_RecurrenceFrequency } from '../../generated/prisma/enums.js';
+import type { TransactionType as Prisma_TransactionType } from '../../generated/prisma/enums.js';
+
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
 import { NotFoundError, BadRequestError } from '../../shared/errors/index.js';
-import { getCategoryColor, getCategoriesByType, CategoryType, AccountType, TransactionType } from '../../shared/enums/index.js';
+import { isCategoryOfType, CategoryType, AccountType, TransactionType } from '../../shared/enums/index.js';
 import { isCustomCategoryName, toCustomCategoryId } from '../../shared/utils/categoryHelpers.js';
 import { updateBalanceForNormalTransaction, recalculateCreditCardLimit } from '../../shared/services/balance.service.js';
+import { calculateNextRunDate } from './recurrence-date.js';
+import { currencySchema } from '../../shared/money/index.js';
+import { getOrCreateInvoiceForTransaction } from '../credit-cards/domain/invoice-cycle.js';
 import type {
   CreateRecurringTransactionInput,
   UpdateRecurringTransactionInput,
@@ -14,33 +21,6 @@ import type {
 /**
  * Calculate next run date based on frequency
  */
-function calculateNextRunDate(
-  currentDate: Date,
-  frequency: 'DAILY' | 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'YEARLY'
-): Date {
-  const next = new Date(currentDate);
-
-  switch (frequency) {
-    case 'DAILY':
-      next.setDate(next.getDate() + 1);
-      break;
-    case 'WEEKLY':
-      next.setDate(next.getDate() + 7);
-      break;
-    case 'BIWEEKLY':
-      next.setDate(next.getDate() + 14);
-      break;
-    case 'MONTHLY':
-      next.setMonth(next.getMonth() + 1);
-      break;
-    case 'YEARLY':
-      next.setFullYear(next.getFullYear() + 1);
-      break;
-  }
-
-  return next;
-}
-
 /**
  * REGRA DE NEGÓCIO CRÍTICA:
  * Criar uma recorrência NÃO cria transações antecipadamente.
@@ -56,7 +36,7 @@ function calculateNextRunDate(
  */
 export async function createRecurringTransaction(
   input: CreateRecurringTransactionInput
-) {
+): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; }; id: string; isActive: boolean; createdAt: Date; updatedAt: Date; householdId: string; description: string | null; categoryName: string; accountId: string; startDate: Date; endDate: Date | null; frequency: Prisma_RecurrenceFrequency; nextRunAt: Date; lastRunDate: Date | null; }> {
   // householdId must be provided (resolved in routes via ensurePersonalHousehold)
   if (!input.householdId) {
     throw new BadRequestError('householdId is required');
@@ -150,18 +130,14 @@ export async function createRecurringTransaction(
           paid: shouldCreateAsPaid,
         });
 
-        console.log(
-          `[RecurringTransaction] ✅ Processed immediately after creation: ${recurring.id} - ` +
-          `Date: ${today.toISOString().split('T')[0]} - Paid: ${shouldCreateAsPaid}`
-        );
+        console.log('[RecurringTransaction] Immediate occurrence processed');
       }
     } catch (error) {
       // Não falhar a criação da recorrência se o processamento imediato falhar
       // Log do erro mas continua
-      console.error(
-        `[RecurringTransaction] ⚠️  Error processing immediately after creation: ${recurring.id}`,
-        error
-      );
+      console.error('[RecurringTransaction] Immediate occurrence failed', {
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+      });
     }
   }
 
@@ -175,7 +151,7 @@ export async function createRecurringTransaction(
 /**
  * Get recurring transaction by ID
  */
-export async function getRecurringTransaction(recurringId: string) {
+export async function getRecurringTransaction(recurringId: string): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; }; id: string; isActive: boolean; createdAt: Date; updatedAt: Date; householdId: string; description: string | null; categoryName: string; accountId: string; startDate: Date; endDate: Date | null; frequency: Prisma_RecurrenceFrequency; nextRunAt: Date; lastRunDate: Date | null; }> {
   const recurring = await prisma.recurringTransaction.findUnique({
     where: { id: recurringId },
     include: {
@@ -201,7 +177,7 @@ export async function getRecurringTransaction(recurringId: string) {
  */
 export async function listRecurringTransactions(
   query: ListRecurringTransactionsQuery
-) {
+): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; }; id: string; isActive: boolean; createdAt: Date; updatedAt: Date; householdId: string; description: string | null; categoryName: string; accountId: string; startDate: Date; endDate: Date | null; frequency: Prisma_RecurrenceFrequency; nextRunAt: Date; lastRunDate: Date | null; }[]> {
   const { householdId, isActive } = query;
 
   const recurring = await prisma.recurringTransaction.findMany({
@@ -237,7 +213,7 @@ export async function updateRecurringTransaction(
   recurringId: string,
   householdId: string,
   input: UpdateRecurringTransactionInput
-) {
+): Promise<{ amount: number; account: { id: string; name: string; type: Prisma_AccountType; }; id: string; isActive: boolean; createdAt: Date; updatedAt: Date; householdId: string; description: string | null; categoryName: string; accountId: string; startDate: Date; endDate: Date | null; frequency: Prisma_RecurrenceFrequency; nextRunAt: Date; lastRunDate: Date | null; }> {
   const existing = await prisma.recurringTransaction.findFirst({
     where: { id: recurringId, householdId },
   });
@@ -321,18 +297,14 @@ export async function updateRecurringTransaction(
           paid: shouldCreateAsPaid,
         });
 
-        console.log(
-          `[RecurringTransaction] ✅ Processed immediately after update: ${recurring.id} - ` +
-          `Date: ${today.toISOString().split('T')[0]} - Paid: ${shouldCreateAsPaid}`
-        );
+        console.log('[RecurringTransaction] Immediate occurrence processed after update');
       }
     } catch (error) {
       // Não falhar a atualização da recorrência se o processamento imediato falhar
       // Log do erro mas continua
-      console.error(
-        `[RecurringTransaction] ⚠️  Error processing immediately after update: ${recurring.id}`,
-        error
-      );
+      console.error('[RecurringTransaction] Immediate occurrence after update failed', {
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+      });
     }
   }
 
@@ -349,7 +321,7 @@ export async function updateRecurringTransaction(
 export async function deleteRecurringTransaction(
   recurringId: string,
   householdId: string
-) {
+): Promise<{ deleted: boolean; }> {
   const recurring = await prisma.recurringTransaction.findFirst({
     where: { id: recurringId, householdId },
   });
@@ -380,7 +352,7 @@ export async function executeRecurringTransaction(
   recurringId: string,
   householdId: string,
   input: ExecuteRecurringTransactionInput = {}
-) {
+): Promise<{ transaction: { account: { id: string; name: string; type: Prisma_AccountType; } | null; } & { id: string; type: Prisma_TransactionType; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; fromAccountId: string | null; toAccountId: string | null; description: string | null; categoryName: string | null; date: Date; notes: string | null; paid: boolean; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; attachmentUrl: string | null; isSplit: boolean; accountId: string | null; relatedEntityId: string | null; recurringTransactionId: string | null; }; nextRunAt: Date; }> {
   const recurring = await prisma.recurringTransaction.findFirst({
     where: { id: recurringId, householdId, isActive: true },
     include: {
@@ -392,7 +364,9 @@ export async function executeRecurringTransaction(
     throw new NotFoundError('Recurring transaction');
   }
 
-  const transactionDate = input.date || recurring.nextRunAt;
+  const requestedDate = input.date || recurring.nextRunAt;
+  const transactionDate = new Date(`${requestedDate.toISOString().slice(0, 10)}T00:00:00.000Z`);
+  const occurrenceDateKey = transactionDate.toISOString().slice(0, 10);
   const isPaid = input.paid ?? false; // Default: false (pendente)
 
   let isIncome: boolean;
@@ -403,13 +377,13 @@ export async function executeRecurringTransaction(
     });
     isIncome = cat?.type === CategoryType.INCOME;
   } else {
-    isIncome = getCategoriesByType(CategoryType.INCOME).includes(recurring.categoryName as any);
+    isIncome = isCategoryOfType(CategoryType.INCOME, recurring.categoryName);
   }
 
-  function calculateBalanceChange(amount: number, isInc: boolean, accountType: string): number {
+  function calculateBalanceChange(amount: Prisma.Decimal, isInc: boolean, accountType: string): Prisma.Decimal {
     const isCreditCard = accountType === AccountType.CREDIT;
-    if (isCreditCard) return isInc ? -amount : amount;
-    return isInc ? amount : -amount;
+    if (isCreditCard) return isInc ? amount.negated() : amount;
+    return isInc ? amount : amount.negated();
   }
 
   // Determine transaction type
@@ -417,6 +391,41 @@ export async function executeRecurringTransaction(
 
   // Create the actual transaction and update next run date
   const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`recurring-occurrence:${recurring.id}:${occurrenceDateKey}`}))`;
+
+    const existingOccurrence = await tx.recurringOccurrence.findUnique({
+      where: {
+        recurringTransactionId_occurrenceDate: {
+          recurringTransactionId: recurring.id,
+          occurrenceDate: transactionDate,
+        },
+      },
+    });
+    if (existingOccurrence) {
+      const existingTransaction = await tx.transaction.findUnique({
+        where: { id: existingOccurrence.transactionId },
+        include: { account: { select: { id: true, name: true, type: true } } },
+      });
+      if (existingTransaction) {
+        const currentRecurring = await tx.recurringTransaction.findUnique({ where: { id: recurring.id } });
+        return { transaction: existingTransaction, nextRunAt: currentRecurring?.nextRunAt ?? recurring.nextRunAt };
+      }
+    }
+
+    const invoiceId = recurring.account.type === AccountType.CREDIT
+      ? await getOrCreateInvoiceForTransaction(tx, {
+          householdId: recurring.account.householdId,
+          cardAccountId: recurring.account.id,
+          currency: currencySchema.parse(recurring.account.currency),
+          closingDay: recurring.account.closingDay,
+          dueDay: recurring.account.dueDay,
+          occurredAt: transactionDate,
+          timeZone: recurring.timeZone,
+          amount: recurring.amount,
+          transactionType: transactionType === TransactionType.INCOME ? 'INCOME' : 'EXPENSE',
+        })
+      : null;
+
     // Create transaction
     const transaction = await tx.transaction.create({
       data: {
@@ -427,6 +436,9 @@ export async function executeRecurringTransaction(
         amount: recurring.amount,
         description: recurring.description || `Recurring: ${recurring.categoryName}`,
         date: transactionDate,
+        occurredAt: transactionDate,
+        timeZone: recurring.timeZone,
+        invoiceId,
         notes: `Auto-generated from recurring transaction: ${recurring.id} on ${new Date().toISOString()}`,
         paid: isPaid,
         recurringTransactionId: recurring.id,
@@ -438,11 +450,19 @@ export async function executeRecurringTransaction(
       },
     });
 
+    await tx.recurringOccurrence.create({
+      data: {
+        recurringTransactionId: recurring.id,
+        occurrenceDate: transactionDate,
+        transactionId: transaction.id,
+      },
+    });
+
     // REGRA DE NEGÓCIO: Atualizar saldo APENAS se paid: true
     // Para cartão de crédito: consome limite imediatamente
     // Para conta bancária: saldo só é atualizado quando confirmada
     if (isPaid && recurring.account) {
-      const amount = recurring.amount.toNumber();
+      const amount = recurring.amount;
       const balanceChange = calculateBalanceChange(amount, isIncome, recurring.account.type);
       
       // Use centralized balance update function to ensure consistency
@@ -478,7 +498,7 @@ export async function executeRecurringTransaction(
 /**
  * Get recurring transactions that are due (nextRunAt <= today)
  */
-export async function getDueRecurringTransactions(householdId: string) {
+export async function getDueRecurringTransactions(householdId: string): Promise<({ account: { id: string; name: string; type: Prisma_AccountType; }; } & { id: string; isActive: boolean; createdAt: Date; updatedAt: Date; householdId: string; amount: Prisma.Decimal; description: string | null; categoryName: string; accountId: string; startDate: Date; endDate: Date | null; frequency: Prisma_RecurrenceFrequency; nextRunAt: Date; lastRunDate: Date | null; })[]> {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
 
@@ -495,9 +515,8 @@ export async function getDueRecurringTransactions(householdId: string) {
         select: { id: true, name: true, type: true },
       },
     },
-    orderBy: { nextRunAt: 'asc' },
+    orderBy: [{ nextRunAt: 'asc' }, { id: 'asc' }],
   });
 
   return due;
 }
-

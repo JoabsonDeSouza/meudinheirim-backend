@@ -7,7 +7,7 @@ import {
 import { dashboardOverviewQuerySchema } from './dashboard.schema.js';
 import * as dashboardService from './dashboard.service.js';
 
-export async function dashboardRoutes(app: FastifyInstance) {
+export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
   // All routes require authentication
   app.addHook('preHandler', authMiddleware());
 
