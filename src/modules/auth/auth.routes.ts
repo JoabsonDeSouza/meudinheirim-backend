@@ -4,9 +4,10 @@ import {
   getUserByFirebaseUid,
   getUserHouseholds,
 } from '../../shared/middleware/authorization.middleware.js';
-import { getOrCreatePersonalHousehold } from '../households/households.service.js';
+import { bootstrapAuthSync } from '../../shared/auth/bootstrap.js';
 import { processReferralCode } from '../users/referrals.service.js';
 import { prisma } from '../../shared/db/prisma.js';
+import { authSyncSchema } from './auth.schema.js';
 
 export async function authRoutes(app: FastifyInstance): Promise<void> {
   /**
@@ -107,15 +108,18 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     '/sync',
     {
       schema: {
-        description: 'Sync Firebase user with database. Called after successful Firebase authentication. Optionally accepts referralCode in body.',
+        description: 'Sync Firebase user and bootstrap the personal household with a default account.',
         tags: ['Auth'],
         security: [{ bearerAuth: [] }],
         body: {
           type: 'object',
+          required: ['locale', 'baseCurrency', 'timeZone'],
           properties: {
+            locale: { type: 'string', enum: ['pt-BR', 'en-US'] },
+            baseCurrency: { type: 'string', enum: ['BRL', 'USD'] },
+            timeZone: { type: 'string', minLength: 1, maxLength: 64 },
             referralCode: { type: 'string', maxLength: 20 },
           },
-          // Allow empty object when no referralCode is provided
           additionalProperties: false,
         },
         response: {
@@ -160,11 +164,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     },
     async (request, reply) => {
       const authUser = getAuthUser(request);
-      const body = request.body as { referralCode?: string } | undefined;
-      const referralCode = body?.referralCode;
-
-      // Create or get user
-      const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
+      const input = authSyncSchema.parse(request.body);
+      const user = await bootstrapAuthSync(authUser.uid, authUser.email, input);
+      const referralCode = input.referralCode;
 
       // Process referral code if provided (only for users without existing referral record)
       // The processReferralCode function already handles duplicate checks and validation
@@ -179,9 +181,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         // Process referral if user doesn't have one yet
         // Also check if user was created recently (within 5 minutes) to avoid processing for very old users
         const hasNoReferralRecord = !existingReferral;
-        const wasCreatedRecently = user.createdAt && 
+        const wasCreatedRecently = user.createdAt &&
           new Date().getTime() - new Date(user.createdAt).getTime() < 300000; // 5 minutes threshold
-        
         if (hasNoReferralRecord && wasCreatedRecently) {
           try {
             console.log(`[Referral] Processing referral code ${referralCode} for user ${user.id}`);
@@ -204,10 +205,6 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
         }
       }
 
-      // Create personal household automatically if it doesn't exist
-      // This ensures users always have a household from the first login
-      const household = await getOrCreatePersonalHousehold(user.id, user.email);
-
       return reply.send({
         success: true,
         data: {
@@ -215,14 +212,9 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
           email: user.email,
           emailVerified: authUser.emailVerified,
           createdAt: user.createdAt,
-          householdId: household.id, // Return household ID so frontend can save it
+          householdId: user.householdId,
         },
       });
     }
   );
 }
-
-
-
-
-

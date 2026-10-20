@@ -52,6 +52,7 @@
 10. IF a verified Firebase identity has an email linked to a different UID THEN the system SHALL reject sync without changing either identity.
 11. IF a request is unauthenticated THEN the system SHALL return HTTP 401 and create no data.
 12. IF an authenticated user requests another household's account data THEN the system SHALL deny access.
+13. WHEN clients read the user-preferences contract THEN the system SHALL document the same preference fields accepted by validation and SHALL persist valid locale and base currency updates.
 
 **Independent Test**: Call sync with valid Firebase test identity and inspect persisted user, household, membership, and account rows; repeat concurrently and verify one account.
 
@@ -68,17 +69,21 @@
 
 | Requirement ID | Story | Phase | Status |
 | --- | --- | --- | --- |
-| AUTH-01 | P1: Initialize finance account after authentication | Execute | Pending |
-| AUTH-02 | P1: Initialize finance account after authentication | Execute | Pending |
+| AUTH-01 | P1: Initialize finance account after authentication | Execute | Verified |
+| AUTH-02 | P1: Initialize finance account after authentication | Execute | Verified |
 | BOOT-01 | P1: Initialize finance account after authentication | Execute | Verified |
 | BOOT-02 | P1: Initialize finance account after authentication | Execute | Verified |
 | BOOT-03 | P1: Initialize finance account after authentication | Execute | Verified |
 | BOOT-04 | P1: Initialize finance account after authentication | Execute | Verified |
 | BOOT-05 | P1: Initialize finance account after authentication | Execute | Verified |
-| AUTH-03 | P1: Initialize finance account after authentication | Execute | Pending |
-| AUTH-04 | P1: Initialize finance account after authentication | Execute | Pending |
+| BOOT-06 | P1: Initialize finance account after authentication | Execute | Verified |
+| BOOT-07 | P1: Initialize finance account after authentication | Execute | Verified |
+| AUTH-03 | P1: Initialize finance account after authentication | Execute | Verified |
+| AUTH-04 | P1: Initialize finance account after authentication | Execute | Verified |
+| AUTH-05 | P1: Initialize finance account after authentication | Execute | Verified |
+| API-01 | P1: Initialize finance account after authentication | Execute | Verified |
 
-**Coverage:** 9 requirements, 9 mapped to tasks, 0 unmapped.
+**Coverage:** 13 requirements, 13 mapped to tasks, 0 unmapped.
 
 ## Success Criteria
 

@@ -23,11 +23,7 @@ export interface AuthSyncUser {
 }
 
 /** Atomically creates the user, personal household, and default account on sync. */
-export async function bootstrapAuthSync(
-  firebaseUid: string,
-  email: string,
-  preferences: AuthSyncPreferences,
-): Promise<AuthSyncUser> {
+export async function bootstrapAuthSync(firebaseUid: string, email: string, preferences: AuthSyncPreferences): Promise<AuthSyncUser> {
   const normalizedEmail = email.trim();
 
   return prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -35,7 +31,9 @@ export async function bootstrapAuthSync(
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`auth-sync-email:${normalizedEmail}`}))`;
 
     const userByUid = await tx.user.findUnique({ where: { firebaseUid } });
-    const userByEmail = await tx.user.findUnique({ where: { email: normalizedEmail } });
+    const userByEmail = await tx.user.findUnique({
+      where: { email: normalizedEmail },
+    });
     if (userByEmail && userByEmail.firebaseUid !== firebaseUid && !userByUid) {
       throw new ConflictError('Email is already linked to another authentication identity');
     }
@@ -60,7 +58,9 @@ export async function bootstrapAuthSync(
     let household = membership?.household;
     if (!household) {
       household = await tx.household.create({
-        data: { name: `${normalizedEmail.split('@')[0] || 'My Finances'}'s Finances` },
+        data: {
+          name: `${normalizedEmail.split('@')[0] || 'My Finances'}'s Finances`,
+        },
       });
       await tx.householdMember.create({
         data: { householdId: household.id, userId: user.id, role: 'OWNER' },

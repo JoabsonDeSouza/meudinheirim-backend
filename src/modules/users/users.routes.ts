@@ -61,10 +61,35 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
         body: {
           type: 'object',
           properties: {
-            currency: { type: 'string' },
-            language: { type: 'string' },
-            timezone: { type: 'string' },
+            displayName: { type: 'string', minLength: 1, maxLength: 100 },
+            onboardingCompleted: { type: 'boolean' },
+            theme: { type: 'string', enum: ['light', 'dark'] },
+            baseCurrency: { type: 'string', enum: ['BRL', 'USD'] },
+            locale: { type: 'string', enum: ['pt-BR', 'en-US'] },
+            country: { type: 'string', minLength: 2, maxLength: 2 },
+            dashboardPreferences: {
+              type: 'object',
+              required: ['widgets'],
+              properties: {
+                widgets: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    required: ['id', 'enabled', 'order'],
+                    properties: {
+                      id: { type: 'string', enum: ['creditCards', 'trends', 'forecast', 'savingsGoals', 'projectedBalance', 'balanceEvolution', 'monthlyComparison', 'insights', 'budgetVsRealized', 'fixedVsVariable', 'dailyCashFlow', 'spendingHeatmap'] },
+                      enabled: { type: 'boolean' },
+                      order: { type: 'integer', minimum: 0 },
+                    },
+                    additionalProperties: false,
+                  },
+                },
+                updatedAt: { type: 'string', format: 'date-time' },
+              },
+              additionalProperties: false,
+            },
           },
+          additionalProperties: false,
         },
         response: {
           200: {

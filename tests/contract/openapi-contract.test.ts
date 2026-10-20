@@ -11,6 +11,12 @@ interface OpenApiPath {
   readonly delete?: unknown;
 }
 
+interface OpenApiOperation {
+  readonly requestBody?: {
+    readonly content?: Readonly<Record<string, { readonly schema?: { readonly required?: readonly string[]; readonly properties?: Readonly<Record<string, unknown>> } }>>;
+  };
+}
+
 interface OpenApiDocument {
   readonly openapi: string;
   readonly paths: Readonly<Record<string, OpenApiPath>>;
@@ -57,6 +63,27 @@ describe('versioned OpenAPI contract', () => {
     expect(document.paths['/health']?.get).toBeDefined();
     expect(document.paths['/ready']?.get).toBeDefined();
     expect(document.paths['/v1/sync/changes']?.get).toBeDefined();
+  });
+
+  it('documents required auth sync locale, currency, and timezone fields', () => {
+    const document = app.swagger() as OpenApiDocument;
+    const operation = document.paths['/v1/auth/sync']?.post as OpenApiOperation | undefined;
+    const bodySchema = operation?.requestBody?.content?.['application/json']?.schema;
+    expect(bodySchema?.required).toEqual(expect.arrayContaining(['locale', 'baseCurrency', 'timeZone']));
+  });
+
+  it('documents user preference fields accepted by the update schema', () => {
+    const document = app.swagger() as OpenApiDocument;
+    const operation = document.paths['/v1/users/me/preferences']?.put as OpenApiOperation | undefined;
+    const properties = operation?.requestBody?.content?.['application/json']?.schema?.properties;
+    expect(properties).toEqual(expect.objectContaining({
+      baseCurrency: expect.any(Object),
+      locale: expect.any(Object),
+      dashboardPreferences: expect.any(Object),
+    }));
+    expect(properties).not.toHaveProperty('currency');
+    expect(properties).not.toHaveProperty('language');
+    expect(properties).not.toHaveProperty('timezone');
   });
 
   it('publishes the shared typed error envelope schema', () => {

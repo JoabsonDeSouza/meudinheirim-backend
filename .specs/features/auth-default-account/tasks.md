@@ -4,7 +4,7 @@
 
 Use `tlc-spec-driven` Execute flow. One task per commit after its gate passes.
 
-**Status**: In Progress
+**Status**: Done
 
 ## Test Coverage Matrix
 
@@ -37,7 +37,7 @@ Use `tlc-spec-driven` Execute flow. One task per commit after its gate passes.
 **What**: Create/find authenticated user and personal household and ensure one zeroed default checking account in one PostgreSQL transaction.
 **Where**: `src/shared/auth/bootstrap.ts`
 **Depends on**: None
-**Requirement**: BOOT-01, BOOT-02, BOOT-03, BOOT-04, BOOT-05
+**Requirement**: BOOT-01, BOOT-02, BOOT-03, BOOT-04, BOOT-05, BOOT-06, BOOT-07
 **Done when**:
 - [x] User, household membership, and account creation share one transaction.
 - [x] Advisory locks serialize syncs for the Firebase UID and email.
@@ -50,15 +50,17 @@ Use `tlc-spec-driven` Execute flow. One task per commit after its gate passes.
 
 ### T2: Expose strict sync request contract
 
-**What**: Validate and document locale, base currency, timezone, and optional referral code; wire HTTP sync to transactional bootstrap.
+**What**: Validate and document auth sync fields, wire HTTP sync to transactional bootstrap, and align preferences OpenAPI schema with its Zod contract.
 **Where**: `src/modules/auth/auth.routes.ts`
 **Depends on**: T1
-**Requirement**: AUTH-01, AUTH-02, AUTH-03, AUTH-04
+**Requirement**: AUTH-01, AUTH-02, AUTH-03, AUTH-04, AUTH-05, API-01
 **Done when**:
 - [ ] Valid sync returns existing response envelope and household ID.
-- [ ] Invalid payload, unauthenticated request, identity conflict, and cross-household access have precise HTTP tests.
-- [ ] OpenAPI contract lists required fields and existing auth/finance endpoints remain documented.
-- [ ] Gate `npm run test:unit && npm run test:integration && npm run test:contract` passes.
+- [x] Invalid payload, unauthenticated request, identity conflict, and cross-household access have precise HTTP tests.
+- [x] OpenAPI contract lists required sync fields and accurately documents preferences.
+- [x] Preference HTTP tests prove valid locale/currency persistence and invalid currency rejection.
+- [x] Existing account, category, transaction, transfer, invoice, dashboard, recent transaction, insight, budget, preferences, and sync contracts pass current suites.
+- [x] Gate `npm run test:unit && npm run test:integration && npm run test:contract` passes (72 unit, 61 integration, 6 contract tests).
 **Tests**: integration, contract
 **Gate**: full
 **Commit**: `feat(auth): validate sync locale currency and timezone`
