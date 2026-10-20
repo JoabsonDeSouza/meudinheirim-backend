@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 import { createTestApp } from '../helpers/app.js';
+import { updateUserPreferencesSchema } from '../../src/modules/users/users.schema.js';
 
 interface OpenApiPath {
   readonly get?: unknown;
@@ -76,14 +77,7 @@ describe('versioned OpenAPI contract', () => {
     const document = app.swagger() as OpenApiDocument;
     const operation = document.paths['/v1/users/me/preferences']?.put as OpenApiOperation | undefined;
     const properties = operation?.requestBody?.content?.['application/json']?.schema?.properties;
-    expect(properties).toEqual(expect.objectContaining({
-      baseCurrency: expect.any(Object),
-      locale: expect.any(Object),
-      dashboardPreferences: expect.any(Object),
-    }));
-    expect(properties).not.toHaveProperty('currency');
-    expect(properties).not.toHaveProperty('language');
-    expect(properties).not.toHaveProperty('timezone');
+    expect(Object.keys(properties ?? {}).sort()).toEqual(Object.keys(updateUserPreferencesSchema.shape).sort());
   });
 
   it('publishes the shared typed error envelope schema', () => {

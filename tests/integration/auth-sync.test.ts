@@ -11,6 +11,7 @@ interface SyncResponse {
     readonly email: string;
     readonly emailVerified: boolean;
     readonly householdId: string;
+    readonly createdAt: string;
   };
 }
 
@@ -21,6 +22,16 @@ const validPayload = {
   baseCurrency: 'BRL',
   timeZone: 'America/Sao_Paulo',
 };
+
+async function databaseCounts(): Promise<{ users: number; households: number; memberships: number; accounts: number }> {
+  const { prisma } = await import('../../src/shared/db/prisma.js');
+  return {
+    users: await prisma.user.count(),
+    households: await prisma.household.count(),
+    memberships: await prisma.householdMember.count(),
+    accounts: await prisma.account.count(),
+  };
+}
 
 beforeAll(async () => {
   await getBootstrapTestDb();
@@ -51,8 +62,19 @@ describe('POST /v1/auth/sync', () => {
     expect(response.statusCode).toBe(200);
     const body = response.json() as SyncResponse;
     expect(body.success).toBe(true);
+    expect(body.data).toEqual({
+      id: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+      email: 'auth-sync-new@example.com',
+      emailVerified: true,
+      createdAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+      householdId: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    });
     expect(body.data.householdId).toMatch(/^[0-9a-f-]{36}$/i);
     const { prisma } = await import('../../src/shared/db/prisma.js');
+    const user = await prisma.user.findUniqueOrThrow({ where: { id: body.data.id } });
+    expect(user.firebaseUid).toBe('auth-sync-new');
+    expect(user.email).toBe(body.data.email);
+    expect(await prisma.householdMember.findMany({ where: { userId: user.id, householdId: body.data.householdId } })).toHaveLength(1);
     const accounts = await prisma.account.findMany({
       where: { householdId: body.data.householdId },
     });
@@ -66,6 +88,7 @@ describe('POST /v1/auth/sync', () => {
   });
 
   it('rejects missing or invalid locale, currency, and timezone without creating user', async () => {
+    const before = await databaseCounts();
     const invalidPayloads: readonly { locale?: string; baseCurrency?: string; timeZone?: string }[] = [
       { baseCurrency: 'BRL', timeZone: 'UTC' },
       { ...validPayload, locale: 'es-ES' },
@@ -81,24 +104,18 @@ describe('POST /v1/auth/sync', () => {
       });
       expect(response.statusCode).toBe(400);
     }
-    const { prisma } = await import('../../src/shared/db/prisma.js');
-    expect(
-      await prisma.user.count({
-        where: { email: { startsWith: 'invalid-sync-' } },
-      }),
-    ).toBe(0);
+    expect(await databaseCounts()).toEqual(before);
   });
 
   it('requires authentication and creates no user when token is absent', async () => {
-    const { prisma } = await import('../../src/shared/db/prisma.js');
-    const usersBefore = await prisma.user.count();
+    const before = await databaseCounts();
     const response = await app.inject({
       method: 'POST',
       url: '/v1/auth/sync',
       payload: validPayload,
     });
     expect(response.statusCode).toBe(401);
-    expect(await prisma.user.count()).toBe(usersBefore);
+    expect(await databaseCounts()).toEqual(before);
   });
 
   it('serializes concurrent HTTP sync requests into one household and account', async () => {

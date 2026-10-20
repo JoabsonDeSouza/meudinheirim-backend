@@ -28,7 +28,7 @@ Use `tlc-spec-driven` Execute flow. One task per commit after its gate passes.
 
 ### Phase 2: HTTP contract and end-to-end behavior
 
-`T1 → T2`
+`T1 → T2 → T3`
 
 ## Task Breakdown
 
@@ -55,7 +55,7 @@ Use `tlc-spec-driven` Execute flow. One task per commit after its gate passes.
 **Depends on**: T1
 **Requirement**: AUTH-01, AUTH-02, AUTH-03, AUTH-04, AUTH-05, API-01
 **Done when**:
-- [ ] Valid sync returns existing response envelope and household ID.
+- [x] Valid sync returns existing response envelope and household ID.
 - [x] Invalid payload, unauthenticated request, identity conflict, and cross-household access have precise HTTP tests.
 - [x] OpenAPI contract lists required sync fields and accurately documents preferences.
 - [x] Preference HTTP tests prove valid locale/currency persistence and invalid currency rejection.
@@ -65,6 +65,23 @@ Use `tlc-spec-driven` Execute flow. One task per commit after its gate passes.
 **Gate**: full
 **Commit**: `feat(auth): validate sync locale currency and timezone`
 
+### T3: Close validation coverage gaps
+
+**What**: Assert complete no-write and rollback outcomes, account status, preservation of complete existing records, exact OpenAPI/Zod field parity, and the full HTTP response envelope.
+**Where**: `tests/integration/bootstrap.test.ts`, `tests/integration/auth-sync.test.ts`, `tests/contract/openapi-contract.test.ts`
+**Depends on**: T1, T2
+**Requirement**: BOOT-02, BOOT-04, BOOT-06, AUTH-01, AUTH-02, API-01
+**Done when**:
+- [x] Invalid and unauthenticated requests leave user, household, membership, and account counts unchanged.
+- [x] Successful sync asserts the user, membership, full response envelope, and active account status.
+- [x] Injected account failure leaves no user, household, membership, or account rows.
+- [x] Existing account and user preference snapshots are exactly unchanged after repeated sync.
+- [x] OpenAPI preference properties exactly match the Zod schema keys.
+- [x] Full final gate passes.
+**Tests**: integration, contract
+**Gate**: full
+**Commit**: `test(auth): strengthen bootstrap contract assertions`
+
 ## Phase Execution Map
 
-`Phase 1: T1 → Phase 2: T2`
+`Phase 1: T1 → Phase 2: T2 → Phase 3: T3`

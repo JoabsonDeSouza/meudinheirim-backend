@@ -34,10 +34,13 @@ interface BootstrapContext {
       totalBalance: string;
       availableBalance: string;
       allocatedBalance: string;
+      status: string;
     }[]
   >;
   createAccount(householdId: string, input: { name: string; currency: 'BRL' | 'USD'; balance: string }): Promise<void>;
-  databaseCounts(email: string): Promise<{ users: number; memberships: number }>;
+  databaseCounts(email: string): Promise<{ users: number; memberships: number; households: number; accounts: number }>;
+  accountSnapshot(householdId: string): Promise<unknown[]>;
+  userPreferences(userId: string): Promise<unknown>;
 }
 
 let context: BootstrapContext;
@@ -72,6 +75,7 @@ beforeAll(async () => {
         totalBalance: account.totalBalance.toFixed(2),
         availableBalance: account.availableBalance.toFixed(2),
         allocatedBalance: account.allocatedBalance.toFixed(2),
+        status: account.status,
       }));
     },
     createAccount: async (householdId, input) => {
@@ -89,10 +93,27 @@ beforeAll(async () => {
     },
     databaseCounts: async email => ({
       users: await prisma.user.count({ where: { email } }),
-      memberships: await prisma.householdMember.count({
-        where: { user: { email } },
-      }),
+      memberships: await prisma.householdMember.count({ where: { user: { email } } }),
+      households: await prisma.household.count({ where: { members: { some: { user: { email } } } } }),
+      accounts: await prisma.account.count({ where: { household: { members: { some: { user: { email } } } } } }),
     }),
+    accountSnapshot: async householdId => {
+      const accounts = await prisma.account.findMany({ where: { householdId }, orderBy: { createdAt: 'asc' } });
+      return accounts.map(account => JSON.parse(JSON.stringify(account)) as unknown);
+    },
+    userPreferences: async userId => {
+      const user = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+      return JSON.parse(JSON.stringify({
+        displayName: user.displayName,
+        onboardingCompleted: user.onboardingCompleted,
+        theme: user.theme,
+        baseCurrency: user.baseCurrency,
+        locale: user.locale,
+        country: user.country,
+        dashboardPreferences: user.dashboardPreferences,
+        preferencesUpdatedAt: user.preferencesUpdatedAt,
+      })) as unknown;
+    },
   };
 });
 
@@ -138,6 +159,7 @@ describe('user/personal-household bootstrap', () => {
       name: 'Conta principal',
       type: 'CHECKING',
       currency: 'BRL',
+      status: 'ACTIVE',
     });
     expect(account.balance).toBe('0.00');
     expect(account.totalBalance).toBe('0.00');
@@ -175,12 +197,7 @@ describe('user/personal-household bootstrap', () => {
     expect(second.id).toBe(first.id);
     expect(second.householdId).toBe(first.householdId);
     expect(await context.accountsForHousehold(first.householdId)).toHaveLength(1);
-    const { prisma } = await import('../../src/shared/db/prisma.js');
-    const user = await prisma.user.findUniqueOrThrow({
-      where: { id: first.id },
-    });
-    expect(user.locale).toBe('pt-BR');
-    expect(user.baseCurrency).toBe('BRL');
+    expect(await context.userPreferences(first.id)).toMatchObject({ locale: 'pt-BR', baseCurrency: 'BRL' });
   });
 
   it('creates one account under concurrent auth sync requests', async () => {
@@ -218,6 +235,8 @@ describe('user/personal-household bootstrap', () => {
       currency: 'USD',
       balance: '125.50',
     });
+    const before = await context.accountSnapshot(existing.householdId);
+    const preferencesBefore = await context.userPreferences(existing.userId);
     await context.syncUser('legacy-has-account-uid', 'legacy-has-account@example.com', {
       locale: 'pt-BR',
       baseCurrency: 'BRL',
@@ -225,6 +244,8 @@ describe('user/personal-household bootstrap', () => {
     });
     const accounts = await context.accountsForHousehold(existing.householdId);
     expect(accounts).toHaveLength(1);
+    expect(await context.accountSnapshot(existing.householdId)).toEqual(before);
+    expect(await context.userPreferences(existing.userId)).toEqual(preferencesBefore);
     expect(accounts[0]).toMatchObject({
       name: 'Existing',
       currency: 'USD',
@@ -246,7 +267,7 @@ describe('user/personal-household bootstrap', () => {
           timeZone: 'UTC',
         }),
       ).rejects.toThrow();
-      expect(await context.databaseCounts('sync-rollback@example.com')).toEqual({ users: 0, memberships: 0 });
+      expect(await context.databaseCounts('sync-rollback@example.com')).toEqual({ users: 0, memberships: 0, households: 0, accounts: 0 });
     } finally {
       await prisma.$executeRawUnsafe('DROP TRIGGER auth_sync_test_fail_account ON accounts');
       await prisma.$executeRawUnsafe('DROP FUNCTION auth_sync_test_fail_account()');
