@@ -3,3 +3,6 @@ dist
 src/generated
 
 .env
+
+# Firebase Admin credentials
+meudinheirim-firebase-adminsdk-fbsvc-fe24384d0e.json
