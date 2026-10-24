@@ -151,6 +151,7 @@ export async function createTransactionV1(
   input: CreateTransactionV1Input,
   householdId: string,
   userId: string,
+  recurringOccurrence?: { recurringTransactionId: string; occurrenceDate: Date },
 ): Promise<TransactionV1Dto> {
   const type = kindToPrismaType(input.kind);
   const money = moneyDtoSchema.parse(input.amount);
@@ -160,11 +161,32 @@ export async function createTransactionV1(
   const identity = {
     userId,
     clientMutationId: input.clientMutationId,
-    hash: payloadHash({ operation: 'transaction.create', householdId, input }),
+    hash: payloadHash({ operation: 'transaction.create', householdId, input, ...(recurringOccurrence ? { recurringOccurrence } : {}) }),
   };
   return prisma.$transaction(async (tx) => {
     const replay = await findMutationReplay(tx, identity, transactionV1DtoSchema);
     if (replay !== null) return replay;
+    if (recurringOccurrence) {
+      const occurrenceDate = civilDate(input.occurredAt);
+      if (occurrenceDate.getTime() !== civilDate(recurringOccurrence.occurrenceDate.toISOString()).getTime()) {
+        throw new BadRequestError('Transaction date must match its recurring occurrence date');
+      }
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`recurring-occurrence:${recurringOccurrence.recurringTransactionId}:${occurrenceDate}`}))`;
+      const existing = await tx.recurringOccurrence.findUnique({
+        where: { recurringTransactionId_occurrenceDate: { recurringTransactionId: recurringOccurrence.recurringTransactionId, occurrenceDate: recurringOccurrence.occurrenceDate } },
+        include: { transaction: { include: { account: { select: { currency: true } } } } },
+      });
+      if (existing?.transaction.account) {
+        const existingDto = toDto({ ...existing.transaction, currency: existing.transaction.account.currency });
+        await saveMutationReceipt(tx, identity, 'transaction', existing.transaction.id, existingDto);
+        return existingDto;
+      }
+      const recurring = await tx.recurringTransaction.findFirst({
+        where: { id: recurringOccurrence.recurringTransactionId, householdId, accountId: input.accountId },
+        select: { id: true },
+      });
+      if (!recurring) throw new NotFoundError('Recurring transaction');
+    }
     const account = await requireAccount(tx, input.accountId, householdId, money.currency);
     const categoryCode = await validateCategory(tx, input.categoryCode, householdId, type);
     const invoiceId = account.type === AccountType.CREDIT
@@ -194,8 +216,18 @@ export async function createTransactionV1(
         notes: input.note,
         paid: input.paid,
         clientMutationId: input.clientMutationId,
+        ...(recurringOccurrence ? { recurringTransactionId: recurringOccurrence.recurringTransactionId } : {}),
       },
     });
+    if (recurringOccurrence) {
+      await tx.recurringOccurrence.create({
+        data: {
+          recurringTransactionId: recurringOccurrence.recurringTransactionId,
+          occurrenceDate: recurringOccurrence.occurrenceDate,
+          transactionId: transaction.id,
+        },
+      });
+    }
     if (input.paid) {
       await applyBalanceChange(tx, account.id, balanceChange(amount, input.kind, account.type));
     }

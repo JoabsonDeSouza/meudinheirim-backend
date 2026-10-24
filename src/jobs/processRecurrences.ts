@@ -24,38 +24,8 @@ import 'dotenv/config';
 import '../shared/config/env.js';
 
 import { prisma } from '../shared/db/prisma.js';
-import { AccountType } from '../shared/enums/index.js';
 import { executeRecurringTransaction } from '../modules/recurring-transactions/recurring-transactions.service.js';
-
-/**
- * Calculate next run date based on frequency
- */
-function calculateNextRunDate(
-  currentDate: Date,
-  frequency: 'DAILY' | 'WEEKLY' | 'BIWEEKLY' | 'MONTHLY' | 'YEARLY'
-): Date {
-  const next = new Date(currentDate);
-
-  switch (frequency) {
-    case 'DAILY':
-      next.setDate(next.getDate() + 1);
-      break;
-    case 'WEEKLY':
-      next.setDate(next.getDate() + 7);
-      break;
-    case 'BIWEEKLY':
-      next.setDate(next.getDate() + 14);
-      break;
-    case 'MONTHLY':
-      next.setMonth(next.getMonth() + 1);
-      break;
-    case 'YEARLY':
-      next.setFullYear(next.getFullYear() + 1);
-      break;
-  }
-
-  return next;
-}
+import { calculateNextRunDate } from '../modules/recurring-transactions/recurrence-date.js';
 
 /**
  * Process all due recurring transactions
@@ -114,8 +84,14 @@ async function processDueRecurringTransactions(): Promise<void> {
           skippedCount++;
           
           // Still update nextRunAt and lastRunDate to prevent reprocessing
-          const nextRunAt = calculateNextRunDate(today, recurring.frequency);
-          const shouldDeactivate = recurring.endDate && nextRunAt > new Date(recurring.endDate);
+          const nextRunAt = calculateNextRunDate(today, recurring.frequency, recurring.anchorDay);
+          const occurrenceCount = await prisma.recurringOccurrence.count({
+            where: { recurringTransactionId: recurring.id, occurrenceDate: { gte: recurring.effectiveFromDate } },
+          });
+          const limitReached = recurring.occurrencesLimit !== null
+            && recurring.occurrencesCountOffset + occurrenceCount >= recurring.occurrencesLimit;
+          const shouldDeactivate = limitReached || recurring.recurrenceMode === 'ONCE'
+            || (recurring.endDate && nextRunAt > new Date(recurring.endDate));
           
           await prisma.recurringTransaction.update({
             where: { id: recurring.id },
@@ -141,21 +117,21 @@ async function processDueRecurringTransactions(): Promise<void> {
           continue;
         }
 
-        // REGRA DE NEGÓCIO: Criar transação baseada no tipo de conta
-        // Cartão de crédito: paid: true (consome limite imediatamente)
-        // Conta bancária: paid: false (pendente para revisão)
-        const isCreditCard = recurring.account.type === AccountType.CREDIT;
-        const shouldCreateAsPaid = isCreditCard;
-
-        // Execute recurring transaction (creates transaction, updates balance if paid, and updates nextRunAt/lastRunDate)
+        // Scheduler execution creates the occurrence, but never represents payment.
         const result = await executeRecurringTransaction(recurring.id, recurring.householdId, {
           date: today,
-          paid: shouldCreateAsPaid,
+          paid: false,
         });
 
         // Check if nextRunAt exceeds endDate
         const nextRunAt = result.nextRunAt;
-        const shouldDeactivate = recurring.endDate && nextRunAt > new Date(recurring.endDate);
+          const occurrenceCount = await prisma.recurringOccurrence.count({
+            where: { recurringTransactionId: recurring.id, occurrenceDate: { gte: recurring.effectiveFromDate } },
+          });
+          const limitReached = recurring.occurrencesLimit !== null
+            && recurring.occurrencesCountOffset + occurrenceCount >= recurring.occurrencesLimit;
+          const shouldDeactivate = limitReached || recurring.recurrenceMode === 'ONCE'
+            || (recurring.endDate && nextRunAt > new Date(recurring.endDate));
 
         // Deactivate if needed (lastRunDate and nextRunAt already updated by executeRecurringTransaction)
         if (shouldDeactivate) {

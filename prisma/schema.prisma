@@ -38,10 +38,10 @@ model User {
 
   // Relations
   householdMembers         HouseholdMember[]
-  householdInvitesSent     HouseholdInvite[] @relation("Inviter")
-  householdInvitesReceived HouseholdInvite[] @relation("Invitee")
-  referralsAsReferrer      Referral[]        @relation("Referrer")
-  referralsAsReferred      Referral?         @relation("Referred")
+  householdInvitesSent     HouseholdInvite[]  @relation("Inviter")
+  householdInvitesReceived HouseholdInvite[]  @relation("Invitee")
+  referralsAsReferrer      Referral[]         @relation("Referrer")
+  referralsAsReferred      Referral?          @relation("Referred")
   notifications            Notification[]
   transactionSplits        TransactionSplit[]
   syncMutations            SyncMutation[]
@@ -80,14 +80,14 @@ model Household {
 }
 
 model HouseholdMember {
-  id          String        @id @default(uuid()) @db.Uuid
-  householdId String        @map("household_id") @db.Uuid
-  userId      String        @map("user_id") @db.Uuid
-  role        HouseholdRole @default(VIEWER)
-  allowPersonalAccountAccess Boolean @default(false) @map("allow_personal_account_access") // Allows other members to use this member's personal accounts in shared household transactions
-  sharedAccountIds Json?     @default("[]") @map("shared_account_ids") // Array of account IDs that this member has specifically chosen to share (overrides allowPersonalAccountAccess when provided)
-  createdAt   DateTime      @default(now()) @map("created_at")
-  updatedAt   DateTime      @updatedAt @map("updated_at")
+  id                         String        @id @default(uuid()) @db.Uuid
+  householdId                String        @map("household_id") @db.Uuid
+  userId                     String        @map("user_id") @db.Uuid
+  role                       HouseholdRole @default(VIEWER)
+  allowPersonalAccountAccess Boolean       @default(false) @map("allow_personal_account_access") // Allows other members to use this member's personal accounts in shared household transactions
+  sharedAccountIds           Json?         @default("[]") @map("shared_account_ids") // Array of account IDs that this member has specifically chosen to share (overrides allowPersonalAccountAccess when provided)
+  createdAt                  DateTime      @default(now()) @map("created_at")
+  updatedAt                  DateTime      @updatedAt @map("updated_at")
 
   // Relations
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
@@ -303,18 +303,18 @@ model Transaction {
   updatedAt              DateTime        @updatedAt @map("updated_at")
 
   // Relations
-  household            Household             @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  account              Account?              @relation("TransactionAccount", fields: [accountId], references: [id], onDelete: SetNull)
-  fromAccount          Account?              @relation("TransactionFromAccount", fields: [fromAccountId], references: [id], onDelete: SetNull)
-  toAccount            Account?              @relation("TransactionToAccount", fields: [toAccountId], references: [id], onDelete: SetNull)
-  relatedAccount       Account?              @relation("TransactionRelatedAccount", fields: [relatedEntityId], references: [id], onDelete: SetNull)
-  recurringTransaction RecurringTransaction? @relation(fields: [recurringTransactionId], references: [id], onDelete: SetNull)
-  recurringOccurrence  RecurringOccurrence?
-  invoice              CreditCardInvoice?    @relation("InvoiceCharges", fields: [invoiceId], references: [id], onDelete: SetNull)
-  invoicePayment       InvoicePayment?
-  invoiceRefund        InvoicePayment?      @relation("InvoiceRefund")
+  household             Household              @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  account               Account?               @relation("TransactionAccount", fields: [accountId], references: [id], onDelete: SetNull)
+  fromAccount           Account?               @relation("TransactionFromAccount", fields: [fromAccountId], references: [id], onDelete: SetNull)
+  toAccount             Account?               @relation("TransactionToAccount", fields: [toAccountId], references: [id], onDelete: SetNull)
+  relatedAccount        Account?               @relation("TransactionRelatedAccount", fields: [relatedEntityId], references: [id], onDelete: SetNull)
+  recurringTransaction  RecurringTransaction?  @relation(fields: [recurringTransactionId], references: [id], onDelete: SetNull)
+  recurringOccurrence   RecurringOccurrence?
+  invoice               CreditCardInvoice?     @relation("InvoiceCharges", fields: [invoiceId], references: [id], onDelete: SetNull)
+  invoicePayment        InvoicePayment?
+  invoiceRefund         InvoicePayment?        @relation("InvoiceRefund")
   invoiceMigrationIssue InvoiceMigrationIssue?
-  splits                TransactionSplit[]    // Divisões da transação entre membros
+  splits                TransactionSplit[] // Divisões da transação entre membros
 
   // Indexes for common queries
   @@index([householdId])
@@ -422,28 +422,47 @@ enum RecurrenceFrequency {
   YEARLY
 }
 
+enum RecurringKind {
+  FIXED
+  VARIABLE
+}
+
+enum RecurrenceMode {
+  ONCE
+  LIMITED
+  ALWAYS
+}
+
 model RecurringTransaction {
-  id           String              @id @default(uuid()) @db.Uuid
-  householdId  String              @map("household_id") @db.Uuid
-  accountId    String              @map("account_id") @db.Uuid
-  categoryName String              @map("category_name") @db.VarChar(50)
-  amount       Decimal             @db.Decimal(15, 2)
-  description  String?
-  frequency    RecurrenceFrequency
-  timeZone     String              @default("UTC") @map("time_zone") @db.VarChar(64)
-  startDate    DateTime            @map("start_date") @db.Date
-  endDate      DateTime?           @map("end_date") @db.Date
-  nextRunAt    DateTime            @map("next_run_at") @db.Date
-  lastRunDate  DateTime?           @map("last_run_date") @db.Date
-  isActive     Boolean             @default(true) @map("is_active")
-  createdAt    DateTime            @default(now()) @map("created_at")
-  updatedAt    DateTime            @updatedAt @map("updated_at")
+  id                     String              @id @default(uuid()) @db.Uuid
+  householdId            String              @map("household_id") @db.Uuid
+  accountId              String              @map("account_id") @db.Uuid
+  categoryName           String              @map("category_name") @db.VarChar(50)
+  amount                 Decimal             @db.Decimal(15, 2)
+  description            String?
+  frequency              RecurrenceFrequency
+  kind                   RecurringKind       @default(FIXED)
+  recurrenceMode         RecurrenceMode      @default(ALWAYS) @map("recurrence_mode")
+  occurrencesLimit       Int?                @map("occurrences_limit")
+  anchorDay              Int                 @default(1) @map("anchor_day")
+  cancelledAt            DateTime?           @map("cancelled_at") @db.Date
+  effectiveFromDate      DateTime            @default(now()) @map("effective_from_date") @db.Date
+  occurrencesCountOffset Int                 @default(0) @map("occurrences_count_offset")
+  timeZone               String              @default("UTC") @map("time_zone") @db.VarChar(64)
+  startDate              DateTime            @map("start_date") @db.Date
+  endDate                DateTime?           @map("end_date") @db.Date
+  nextRunAt              DateTime            @map("next_run_at") @db.Date
+  lastRunDate            DateTime?           @map("last_run_date") @db.Date
+  isActive               Boolean             @default(true) @map("is_active")
+  createdAt              DateTime            @default(now()) @map("created_at")
+  updatedAt              DateTime            @updatedAt @map("updated_at")
 
   // Relations
-  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  account      Account       @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  transactions Transaction[]
-  occurrences  RecurringOccurrence[]
+  household        Household                  @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  account          Account                    @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  transactions     Transaction[]
+  occurrences      RecurringOccurrence[]
+  scheduleVersions RecurringScheduleVersion[]
 
   // Indexes
   // REGRA DE NEGÓCIO: Índice em nextRunAt para otimizar busca do cronjob
@@ -454,9 +473,36 @@ model RecurringTransaction {
   @@map("recurring_transactions")
 }
 
+model RecurringScheduleVersion {
+  id                     String              @id @default(uuid()) @db.Uuid
+  recurringTransactionId String              @map("recurring_transaction_id") @db.Uuid
+  effectiveFromDate      DateTime            @map("effective_from_date") @db.Date
+  effectiveToDate        DateTime            @map("effective_to_date") @db.Date
+  startDate              DateTime            @map("start_date") @db.Date
+  endDate                DateTime?           @map("end_date") @db.Date
+  accountId              String              @map("account_id") @db.Uuid
+  categoryName           String              @map("category_name") @db.VarChar(50)
+  amount                 Decimal             @db.Decimal(15, 2)
+  description            String?
+  frequency              RecurrenceFrequency
+  kind                   RecurringKind
+  recurrenceMode         RecurrenceMode      @map("recurrence_mode")
+  occurrencesLimit       Int?                @map("occurrences_limit")
+  occurrencesCountOffset Int                 @map("occurrences_count_offset")
+  anchorDay              Int                 @map("anchor_day")
+  timeZone               String              @map("time_zone") @db.VarChar(64)
+  createdAt              DateTime            @default(now()) @map("created_at")
+
+  recurringTransaction RecurringTransaction @relation(fields: [recurringTransactionId], references: [id], onDelete: Cascade)
+
+  @@unique([recurringTransactionId, effectiveFromDate])
+  @@index([recurringTransactionId, effectiveFromDate, effectiveToDate])
+  @@map("recurring_schedule_versions")
+}
+
 model RecurringOccurrence {
-  id                    String   @id @default(uuid()) @db.Uuid
-  recurringTransactionId String  @map("recurring_transaction_id") @db.Uuid
+  id                     String   @id @default(uuid()) @db.Uuid
+  recurringTransactionId String   @map("recurring_transaction_id") @db.Uuid
   occurrenceDate         DateTime @map("occurrence_date") @db.Date
   transactionId          String   @unique @map("transaction_id") @db.Uuid
   createdAt              DateTime @default(now()) @map("created_at")
@@ -485,9 +531,9 @@ model CreditCardInvoice {
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")
 
-  household Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  card      Account       @relation(fields: [cardAccountId], references: [id], onDelete: Cascade)
-  charges   Transaction[] @relation("InvoiceCharges")
+  household Household        @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  card      Account          @relation(fields: [cardAccountId], references: [id], onDelete: Cascade)
+  charges   Transaction[]    @relation("InvoiceCharges")
   payments  InvoicePayment[]
 
   @@unique([cardAccountId, periodStart])
@@ -497,17 +543,17 @@ model CreditCardInvoice {
 }
 
 model InvoicePayment {
-  id            String   @id @default(uuid()) @db.Uuid
-  invoiceId     String   @map("invoice_id") @db.Uuid
-  transactionId String   @unique @map("transaction_id") @db.Uuid
-  amount        Decimal  @db.Decimal(15, 2)
-  refundedAt    DateTime? @map("refunded_at") @db.Timestamptz(3)
-  refundTransactionId String? @unique @map("refund_transaction_id") @db.Uuid
-  createdAt     DateTime @default(now()) @map("created_at")
+  id                  String    @id @default(uuid()) @db.Uuid
+  invoiceId           String    @map("invoice_id") @db.Uuid
+  transactionId       String    @unique @map("transaction_id") @db.Uuid
+  amount              Decimal   @db.Decimal(15, 2)
+  refundedAt          DateTime? @map("refunded_at") @db.Timestamptz(3)
+  refundTransactionId String?   @unique @map("refund_transaction_id") @db.Uuid
+  createdAt           DateTime  @default(now()) @map("created_at")
 
-  invoice     CreditCardInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  transaction Transaction       @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  refundTransaction Transaction? @relation("InvoiceRefund", fields: [refundTransactionId], references: [id], onDelete: SetNull)
+  invoice           CreditCardInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  transaction       Transaction       @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  refundTransaction Transaction?      @relation("InvoiceRefund", fields: [refundTransactionId], references: [id], onDelete: SetNull)
 
   @@index([invoiceId])
   @@map("invoice_payments")
@@ -609,19 +655,19 @@ enum NotificationStatus {
 }
 
 model Notification {
-  id          String             @id @default(uuid()) @db.Uuid
-  userId      String             @map("user_id") @db.Uuid
-  type        NotificationType
-  status      NotificationStatus @default(UNREAD)
-  title       String
-  message     String
-  metadata    Json?              // Flexible data for different notification types (e.g., { inviteId, householdId, etc. })
-  deepLink    String?            @map("deep_link") // Deep link URL (e.g., /app/notifications/:id or /households/:id/invites/:inviteId)
-  readAt      DateTime?          @map("read_at")
-  archivedAt  DateTime?          @map("archived_at")
-  createdAt   DateTime           @default(now()) @map("created_at")
-  updatedAt   DateTime           @updatedAt @map("updated_at")
-  expiresAt   DateTime?          @map("expires_at") // Optional expiration (for invites, etc.)
+  id         String             @id @default(uuid()) @db.Uuid
+  userId     String             @map("user_id") @db.Uuid
+  type       NotificationType
+  status     NotificationStatus @default(UNREAD)
+  title      String
+  message    String
+  metadata   Json? // Flexible data for different notification types (e.g., { inviteId, householdId, etc. })
+  deepLink   String?            @map("deep_link") // Deep link URL (e.g., /app/notifications/:id or /households/:id/invites/:inviteId)
+  readAt     DateTime?          @map("read_at")
+  archivedAt DateTime?          @map("archived_at")
+  createdAt  DateTime           @default(now()) @map("created_at")
+  updatedAt  DateTime           @updatedAt @map("updated_at")
+  expiresAt  DateTime?          @map("expires_at") // Optional expiration (for invites, etc.)
 
   // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

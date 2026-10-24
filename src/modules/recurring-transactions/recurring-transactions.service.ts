@@ -79,6 +79,10 @@ export async function createRecurringTransaction(
       amount: new Prisma.Decimal(amount),
       description,
       frequency,
+      recurrenceMode: endDate ? 'LIMITED' : 'ALWAYS',
+      anchorDay: startDate.getUTCDate(),
+      effectiveFromDate: startDate,
+      occurrencesCountOffset: 0,
       startDate,
       endDate,
       nextRunAt,
@@ -249,6 +253,8 @@ export async function updateRecurringTransaction(
       ...(input.frequency && { frequency: input.frequency }),
       ...(input.startDate && { startDate: input.startDate }),
       ...(input.endDate !== undefined && { endDate: input.endDate }),
+      ...(input.endDate !== undefined && { recurrenceMode: input.endDate ? 'LIMITED' : 'ALWAYS' }),
+      ...(input.startDate !== undefined && { anchorDay: input.startDate.getUTCDate() }),
       ...(input.nextRunAt && { nextRunAt: input.nextRunAt }),
       ...(input.isActive !== undefined && { isActive: input.isActive }),
     },
@@ -368,6 +374,7 @@ export async function executeRecurringTransaction(
   const transactionDate = new Date(`${requestedDate.toISOString().slice(0, 10)}T00:00:00.000Z`);
   const occurrenceDateKey = transactionDate.toISOString().slice(0, 10);
   const isPaid = input.paid ?? false; // Default: false (pendente)
+  const occurrenceAmount = recurring.amount;
 
   let isIncome: boolean;
   if (isCustomCategoryName(recurring.categoryName)) {
@@ -421,7 +428,7 @@ export async function executeRecurringTransaction(
           dueDay: recurring.account.dueDay,
           occurredAt: transactionDate,
           timeZone: recurring.timeZone,
-          amount: recurring.amount,
+          amount: occurrenceAmount,
           transactionType: transactionType === TransactionType.INCOME ? 'INCOME' : 'EXPENSE',
         })
       : null;
@@ -433,7 +440,7 @@ export async function executeRecurringTransaction(
         type: transactionType,
         accountId: recurring.accountId,
         categoryName: recurring.categoryName,
-        amount: recurring.amount,
+        amount: occurrenceAmount,
         description: recurring.description || `Recurring: ${recurring.categoryName}`,
         date: transactionDate,
         occurredAt: transactionDate,
@@ -462,7 +469,7 @@ export async function executeRecurringTransaction(
     // Para cartão de crédito: consome limite imediatamente
     // Para conta bancária: saldo só é atualizado quando confirmada
     if (isPaid && recurring.account) {
-      const amount = recurring.amount;
+      const amount = occurrenceAmount;
       const balanceChange = calculateBalanceChange(amount, isIncome, recurring.account.type);
       
       // Use centralized balance update function to ensure consistency
@@ -475,14 +482,21 @@ export async function executeRecurringTransaction(
     }
 
     // Calculate and update next run date
-    const nextRunAt = calculateNextRunDate(transactionDate, recurring.frequency);
+    const nextRunAt = calculateNextRunDate(transactionDate, recurring.frequency, recurring.anchorDay);
 
     // Update lastRunDate and nextRunAt
+    const occurrenceCount = await tx.recurringOccurrence.count({
+      where: { recurringTransactionId: recurringId, occurrenceDate: { gte: recurring.effectiveFromDate } },
+    });
+    const reachedLimit = recurring.occurrencesLimit !== null
+      && recurring.occurrencesCountOffset + occurrenceCount >= recurring.occurrencesLimit;
+    const passedEndDate = recurring.endDate !== null && nextRunAt > recurring.endDate;
     await tx.recurringTransaction.update({
       where: { id: recurringId },
-      data: { 
+      data: {
         lastRunDate: transactionDate,
         nextRunAt,
+        ...(reachedLimit || passedEndDate ? { isActive: false } : {}),
       },
     });
 

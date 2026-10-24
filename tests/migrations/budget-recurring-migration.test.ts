@@ -40,6 +40,6 @@ describe('budget and recurring occurrence migration', () => {
     const occurrenceConstraints = await pool.query<{ conname: string }>(
       `SELECT conname FROM pg_constraint WHERE conrelid = 'recurring_occurrences'::regclass AND contype = 'u'`,
     );
-    expect(occurrenceConstraints.rows.map((row) => row.conname)).toContain('recurring_occurrences_recurring_date_key');
+    expect(occurrenceConstraints.rows.map((row) => row.conname)).toContain('recurring_occurrences_recurring_transaction_id_occurrence_d_key');
   });
 });

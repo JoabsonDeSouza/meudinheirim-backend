@@ -56,6 +56,14 @@ describe('versioned OpenAPI contract', () => {
     expect(document.paths['/v1/insights/monthly-series']?.get).toBeDefined();
     expect(document.paths['/v1/insights/category-movement']?.get).toBeDefined();
     expect(document.paths['/v1/insights/spending-patterns']?.get).toBeDefined();
+    expect(document.paths['/v1/recurring-transactions/']?.get).toBeDefined();
+    expect(document.paths['/v1/recurring-transactions/']?.post).toBeDefined();
+    expect(document.paths['/v1/recurring-transactions/managed']?.get).toBeDefined();
+    expect(document.paths['/v1/recurring-transactions/managed']?.post).toBeDefined();
+    expect(document.paths['/v1/recurring-transactions/occurrences']?.get).toBeDefined();
+    expect(document.paths['/v1/recurring-transactions/{recurringId}']?.patch).toBeDefined();
+    expect(document.paths['/v1/recurring-transactions/{recurringId}']?.delete).toBeDefined();
+    expect(document.paths['/v1/recurring-transactions/{recurringId}/occurrences/{occurrenceDate}/pay']?.post).toBeDefined();
   });
 
   it('documents public auth configuration and health/readiness routes', () => {
