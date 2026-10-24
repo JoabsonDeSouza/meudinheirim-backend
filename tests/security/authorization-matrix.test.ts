@@ -231,6 +231,13 @@ describe('authorization matrix (accounts/financial surfaces)', () => {
   });
 
   it('preferences endpoint rejects isPremium mass assignment', async () => {
+    const { prisma } = await import('../../src/shared/db/prisma.js');
+    const owner = await prisma.user.findUniqueOrThrow({
+      where: { firebaseUid: 'sec-owner' },
+      select: { id: true },
+    });
+    await prisma.user.update({ where: { id: owner.id }, data: { isPremium: false } });
+
     const response = await app.inject({
       method: 'PUT',
       url: '/users/me/preferences',
@@ -238,6 +245,11 @@ describe('authorization matrix (accounts/financial surfaces)', () => {
       payload: { isPremium: true },
     });
     expect(response.statusCode).toBe(400);
+    const userAfterRequest = await prisma.user.findUniqueOrThrow({
+      where: { id: owner.id },
+      select: { isPremium: true },
+    });
+    expect(userAfterRequest.isPremium).toBe(false);
   });
 
   it('outsider cannot access a household they are not a member of', async () => {

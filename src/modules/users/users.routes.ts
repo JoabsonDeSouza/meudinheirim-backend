@@ -101,7 +101,12 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
           },
         },
       },
-      preHandler: authMiddleware(),
+      preValidation: [
+        authMiddleware(),
+        async (request) => {
+          updateUserPreferencesSchema.parse(request.body);
+        },
+      ],
     },
     async (request, reply) => {
       const authUser = getAuthUser(request);
@@ -248,6 +253,4 @@ export async function userRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 }
-
-
 
