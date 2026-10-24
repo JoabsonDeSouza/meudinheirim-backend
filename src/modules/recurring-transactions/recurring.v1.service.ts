@@ -1,5 +1,5 @@
-import { BadRequestError, NotFoundError, VersionConflictError } from '../../shared/errors/index.js';
-import { CategoryType, getCategoriesByType, isCategoryOfType } from '../../shared/enums/index.js';
+import { BadRequestError, NotFoundError, OccurrenceAccountConflictError, VersionConflictError } from '../../shared/errors/index.js';
+import { AccountType, CategoryType, getCategoriesByType, isCategoryOfType } from '../../shared/enums/index.js';
 import { decimalToMinorUnits, minorUnitsToDecimal, type Currency } from '../../shared/money/index.js';
 import { isCustomCategoryName, toCustomCategoryId, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import type { Prisma } from '../../generated/prisma/client.js';
@@ -53,14 +53,6 @@ function toRecurringDto(row: RecurringWithAccount): RecurringManagedV1Dto {
 }
 
 export async function createRecurringManagedV1(input: CreateRecurringV1Input, householdId: string): Promise<RecurringManagedV1Dto> {
-  const account = await prisma.account.findFirst({
-    where: { id: input.accountId, householdId, isActive: true },
-    select: { id: true, currency: true },
-  });
-  if (!account) throw new NotFoundError('Account');
-  const accountCurrency = currency(account.currency);
-  if (accountCurrency !== input.amount.currency) throw new BadRequestError('Recurring currency must match account currency');
-
   let categoryCode = input.categoryCode;
   if (isCustomCategoryName(input.categoryCode)) {
     const id = toCustomCategoryId(input.categoryCode);
@@ -73,26 +65,37 @@ export async function createRecurringManagedV1(input: CreateRecurringV1Input, ho
     throw new BadRequestError('Category code is not supported for recurring transactions');
   }
 
-  const row = await prisma.recurringTransaction.create({
-    data: {
-      householdId,
-      accountId: account.id,
-      categoryName: categoryCode,
-      amount: minorUnitsToDecimal(input.amount),
-      description: input.description,
-      frequency: input.frequency,
-      kind: input.kind,
-      recurrenceMode: input.recurrenceMode ?? (input.endDate ? 'LIMITED' : 'ALWAYS'),
-      occurrencesLimit: input.recurrenceMode === 'ONCE' ? 1 : input.occurrencesLimit,
-      anchorDay: new Date(`${input.startDate}T00:00:00.000Z`).getUTCDate(),
-      effectiveFromDate: new Date(`${input.startDate}T00:00:00.000Z`),
-      occurrencesCountOffset: 0,
-      startDate: new Date(`${input.startDate}T00:00:00.000Z`),
-      endDate: input.endDate ? new Date(`${input.endDate}T00:00:00.000Z`) : null,
-      nextRunAt: new Date(`${(input.nextRunAt ?? input.startDate)}T00:00:00.000Z`),
-      timeZone: input.timeZone,
-    },
-    include: { account: { select: { currency: true } } },
+  const row = await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${input.accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+    const account = await tx.account.findFirst({
+      where: { id: input.accountId, householdId, isActive: true },
+      select: { id: true, currency: true },
+    });
+    if (!account) throw new NotFoundError('Account');
+    const accountCurrency = currency(account.currency);
+    if (accountCurrency !== input.amount.currency) throw new BadRequestError('Recurring currency must match account currency');
+
+    return tx.recurringTransaction.create({
+      data: {
+        householdId,
+        accountId: account.id,
+        categoryName: categoryCode,
+        amount: minorUnitsToDecimal(input.amount),
+        description: input.description,
+        frequency: input.frequency,
+        kind: input.kind,
+        recurrenceMode: input.recurrenceMode ?? (input.endDate ? 'LIMITED' : 'ALWAYS'),
+        occurrencesLimit: input.recurrenceMode === 'ONCE' ? 1 : input.occurrencesLimit,
+        anchorDay: new Date(`${input.startDate}T00:00:00.000Z`).getUTCDate(),
+        effectiveFromDate: new Date(`${input.startDate}T00:00:00.000Z`),
+        occurrencesCountOffset: 0,
+        startDate: new Date(`${input.startDate}T00:00:00.000Z`),
+        endDate: input.endDate ? new Date(`${input.endDate}T00:00:00.000Z`) : null,
+        nextRunAt: new Date(`${(input.nextRunAt ?? input.startDate)}T00:00:00.000Z`),
+        timeZone: input.timeZone,
+      },
+      include: { account: { select: { currency: true } } },
+    });
   });
 
   return toRecurringDto(row);
@@ -157,10 +160,17 @@ export async function updateRecurringV1(
 ): Promise<RecurringManagedV1Dto> {
   const current = await prisma.recurringTransaction.findFirst({
     where: { id: recurringId, householdId, isActive: true },
-    include: { account: { select: { currency: true } }, scheduleVersions: true },
+    include: { account: { select: { id: true, currency: true, type: true } }, scheduleVersions: true },
   });
   if (!current) throw new NotFoundError('Recurring transaction');
-  if (input.amount && currency(current.account.currency) !== input.amount.currency) {
+  const targetAccount = input.accountId === undefined
+    ? current.account
+    : await prisma.account.findFirst({ where: { id: input.accountId, householdId, isActive: true }, select: { id: true, currency: true, type: true } });
+  if (!targetAccount) throw new NotFoundError('Active account');
+  if (currency(targetAccount.currency) !== currency(current.account.currency)) {
+    throw new BadRequestError('Recurring account currency cannot be changed');
+  }
+  if (input.amount && currency(targetAccount.currency) !== input.amount.currency) {
     throw new BadRequestError('Recurring currency must match account currency');
   }
 
@@ -228,6 +238,20 @@ export async function updateRecurringV1(
     && !(endDate !== null && effectiveFromDate > endDate);
 
   const row = await prisma.$transaction(async (tx) => {
+    const accountChanged = targetAccount.id !== current.accountId;
+    let pendingOccurrences: Array<{ accountId: string | null; account: { type: string } | null }> = [];
+    if (accountChanged) {
+      await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${targetAccount.id}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+      const activeTarget = await tx.account.findFirst({ where: { id: targetAccount.id, householdId, isActive: true } });
+      if (!activeTarget) throw new NotFoundError('Active account');
+      pendingOccurrences = await tx.transaction.findMany({
+        where: { recurringTransactionId: recurringId, date: { gte: effectiveFromDate }, paid: false, deletedAt: null },
+        select: { accountId: true, account: { select: { type: true } } },
+      });
+      if (pendingOccurrences.length > 0 && (targetAccount.type === AccountType.CREDIT || pendingOccurrences.some((item) => item.account?.type === AccountType.CREDIT))) {
+        throw new OccurrenceAccountConflictError('A materialized unpaid card occurrence cannot be reassigned; edit the schedule after it is settled or use the invoice lifecycle');
+      }
+    }
     if (effectiveFromDate > current.effectiveFromDate) {
       await tx.recurringScheduleVersion.create({
         data: {
@@ -253,6 +277,7 @@ export async function updateRecurringV1(
     const updated = await tx.recurringTransaction.update({
       where: { id: recurringId },
       data: {
+        ...(accountChanged ? { accountId: targetAccount.id } : {}),
         categoryName,
         amount: input.amount ? minorUnitsToDecimal(input.amount) : undefined,
         description: input.description,
@@ -278,6 +303,7 @@ export async function updateRecurringV1(
       },
       data: {
         categoryName,
+        ...(accountChanged && pendingOccurrences.length > 0 ? { accountId: targetAccount.id } : {}),
         amount: input.amount ? minorUnitsToDecimal(input.amount) : undefined,
         description: input.description === undefined ? undefined : input.description ?? `Recurring: ${categoryName}`,
       },
@@ -373,7 +399,7 @@ export async function listRecurringOccurrencesV1(
         transactionVersion: transaction?.version ?? null,
         description: rule.description,
         categoryCode: rule.categoryName,
-        accountId: rule.accountId,
+        accountId: transaction?.accountId ?? rule.accountId,
       });
       }
     }
@@ -393,10 +419,10 @@ export async function payRecurringOccurrenceV1(
   householdId: string,
   userId: string,
   input: PayRecurringOccurrenceInput,
-): Promise<{ recurringTransactionId: string; date: string; transactionId: string; status: 'PAID'; amount: { minorUnits: number; currency: Currency }; replayed: boolean }> {
+): Promise<{ recurringTransactionId: string; date: string; transactionId: string; accountId: string; status: 'PAID'; amount: { minorUnits: number; currency: Currency }; replayed: boolean }> {
   const recurring = await prisma.recurringTransaction.findFirst({
     where: { id: recurringId, householdId },
-    include: { account: { select: { currency: true } }, occurrences: { where: { occurrenceDate: new Date(`${occurrenceDate}T00:00:00.000Z`) }, include: { transaction: true } }, scheduleVersions: true },
+    include: { account: { select: { currency: true } }, occurrences: { where: { occurrenceDate: new Date(`${occurrenceDate}T00:00:00.000Z`) }, include: { transaction: { include: { account: { select: { id: true, type: true, currency: true } } } } } }, scheduleVersions: true },
   });
   if (!recurring) throw new NotFoundError('Recurring transaction');
   const accountCurrency = currency(recurring.account.currency);
@@ -430,10 +456,17 @@ export async function payRecurringOccurrenceV1(
   if (!expectedDates.length) throw new NotFoundError('Recurring occurrence');
   const existingTransaction = recurring.occurrences[0]?.transaction;
   if (existingTransaction?.paid) {
+    if (input.accountId !== undefined && input.accountId !== existingTransaction.accountId) {
+      throw new OccurrenceAccountConflictError('A paid occurrence cannot be reassigned to another account');
+    }
     const currentMinorUnits = decimalToMinorUnits(existingTransaction.amount, accountCurrency);
     if (currentMinorUnits !== input.amount.minorUnits) throw new BadRequestError('Occurrence has already been paid with a different amount');
-    return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: existingTransaction.id, status: 'PAID', amount: input.amount, replayed: true };
+    return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: existingTransaction.id, accountId: existingTransaction.accountId!, status: 'PAID', amount: input.amount, replayed: true };
   }
+  const targetAccountId = input.accountId ?? existingTransaction?.accountId ?? rule.accountId;
+  const targetAccount = await prisma.account.findFirst({ where: { id: targetAccountId, householdId, isActive: true } });
+  if (!targetAccount) throw new NotFoundError('Active account');
+  if (currency(targetAccount.currency) !== accountCurrency) throw new BadRequestError('Occurrence account currency must match the recurring schedule');
   if (existingTransaction) {
     let updated: Awaited<ReturnType<typeof updateTransactionV1>>;
     try {
@@ -444,17 +477,19 @@ export async function payRecurringOccurrenceV1(
         updateTransactionV1Schema.parse({
           clientMutationId: input.clientMutationId,
           expectedVersion: existingTransaction.version,
+          ...(targetAccountId !== existingTransaction.accountId ? { accountId: targetAccountId } : {}),
           amount: input.amount,
           paid: true,
         }),
+        { allowOccurrenceAccountChange: true },
       );
     } catch (error) {
       if (!(error instanceof VersionConflictError)) throw error;
       const latest = await prisma.transaction.findFirst({ where: { id: existingTransaction.id, householdId, deletedAt: null } });
-      if (!latest?.paid || decimalToMinorUnits(latest.amount, accountCurrency) !== input.amount.minorUnits) throw error;
-      return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: latest.id, status: 'PAID', amount: input.amount, replayed: true };
+      if (!latest?.paid || latest.accountId !== targetAccountId || decimalToMinorUnits(latest.amount, accountCurrency) !== input.amount.minorUnits) throw error;
+      return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: latest.id, accountId: latest.accountId!, status: 'PAID', amount: input.amount, replayed: true };
     }
-    return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: updated.id, status: 'PAID', amount: input.amount, replayed: updated.version === existingTransaction.version };
+    return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: updated.id, accountId: updated.accountId, status: 'PAID', amount: input.amount, replayed: updated.version === existingTransaction.version };
   }
   const created = await createTransactionV1(
     createTransactionV1Schema.parse({
@@ -462,7 +497,7 @@ export async function payRecurringOccurrenceV1(
       kind: 'expense',
       amount: input.amount,
       categoryCode: rule.categoryName,
-      accountId: rule.accountId,
+      accountId: targetAccountId,
       occurredAt: `${occurrenceDate}T00:00:00.000Z`,
       timeZone: rule.timeZone,
       paid: true,
@@ -471,5 +506,5 @@ export async function payRecurringOccurrenceV1(
     userId,
     { recurringTransactionId: recurringId, occurrenceDate: paidDate },
   );
-  return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: created.id, status: 'PAID', amount: input.amount, replayed: false };
+  return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: created.id, accountId: created.accountId, status: 'PAID', amount: input.amount, replayed: false };
 }

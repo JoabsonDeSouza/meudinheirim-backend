@@ -159,6 +159,7 @@ model Account {
   last4            String?       @db.VarChar(4)
   version          Int           @default(1)
   isActive         Boolean       @default(true) @map("is_active")
+  isPrimaryCard    Boolean       @default(false) @map("is_primary_card")
   status           AccountStatus @default(ACTIVE)
   color            String?       @db.VarChar(7) // Hex color
   icon             String? // Icon identifier

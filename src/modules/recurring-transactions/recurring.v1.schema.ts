@@ -59,6 +59,7 @@ export const createRecurringManagedV1Schema = createRecurringBaseSchema.omit({ n
 export type CreateRecurringManagedV1Input = z.infer<typeof createRecurringManagedV1Schema>;
 
 export const updateRecurringV1Schema = z.object({
+  accountId: z.string().uuid().optional(),
   categoryCode: categoryNameSchema.optional(),
   amount: moneyDtoSchema.refine((value) => value.minorUnits > 0, 'Recurring amount must be positive').optional(),
   description: z.string().max(255).nullable().optional(),
@@ -82,6 +83,7 @@ export const recurringOccurrenceQuerySchema = z.object({
 
 export const payRecurringOccurrenceSchema = z.object({
   householdId: z.string().uuid().optional(),
+  accountId: z.string().uuid().optional(),
   amount: moneyDtoSchema.refine((value) => value.minorUnits > 0, 'Occurrence amount must be positive'),
   clientMutationId: z.string().uuid(),
 }).strict();

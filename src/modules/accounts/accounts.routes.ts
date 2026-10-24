@@ -302,15 +302,48 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  app.post<{ Params: { accountId: string } }>('/:accountId/primary-card', {
+    schema: {
+      description: 'Atomically select this active credit card as the household primary for its currency',
+      tags: ['Accounts'],
+      security: [{ bearerAuth: [] }],
+      params: { type: 'object', required: ['accountId'], properties: { accountId: { type: 'string', format: 'uuid' } } },
+      response: { 200: { type: 'object', properties: { success: { type: 'boolean' }, data: { type: 'object', additionalProperties: true } } } },
+    },
+  }, async (request, reply) => {
+    const { accountId } = accountIdParamSchema.parse(request.params);
+    const existing = await accountsService.getAccount(accountId);
+    await requireEditor(request, existing.householdId);
+    const account = await accountsService.setPrimaryCreditCard(accountId, existing.householdId);
+    return reply.send({ success: true, data: { ...account, balance: account.balance.toNumber(), creditLimit: account.creditLimit?.toNumber() ?? null } });
+  });
+
+  app.post<{ Params: { accountId: string } }>('/:accountId/archive', {
+    schema: {
+      description: 'Safely archive an account without deleting its history; blocks while balances or pending activity remain',
+      tags: ['Accounts'],
+      security: [{ bearerAuth: [] }],
+      params: { type: 'object', required: ['accountId'], properties: { accountId: { type: 'string', format: 'uuid' } } },
+      response: { 200: { type: 'object', properties: { success: { type: 'boolean' }, data: { type: 'object', additionalProperties: true } } } },
+    },
+  }, async (request, reply) => {
+    const { accountId } = accountIdParamSchema.parse(request.params);
+    const existing = await accountsService.getAccount(accountId);
+    await requireEditor(request, existing.householdId);
+    const account = await accountsService.archiveAccount(accountId, existing.householdId);
+    return reply.send({ success: true, data: { ...account, balance: account.balance.toNumber(), creditLimit: account.creditLimit?.toNumber() ?? null } });
+  });
+
   /**
    * DELETE /accounts/:accountId
-   * Delete account permanently from database (EDITOR+)
+   * Legacy hard-delete endpoint; new clients should use safe archival.
    */
   app.delete<{ Params: { accountId: string }; Querystring: { deleteTransactions?: boolean } }>(
     '/:accountId',
     {
       schema: {
         description: 'Delete account permanently from database (EDITOR+)',
+        deprecated: true,
         tags: ['Accounts'],
         security: [{ bearerAuth: [] }],
         params: {
@@ -460,7 +493,6 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 }
-
 
 
 

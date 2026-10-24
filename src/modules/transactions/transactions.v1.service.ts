@@ -1,6 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { TransactionType } from '../../generated/prisma/enums.js';
-import { NotFoundError, BadRequestError, VersionConflictError } from '../../shared/errors/index.js';
+import { NotFoundError, BadRequestError, OccurrenceAccountConflictError, VersionConflictError } from '../../shared/errors/index.js';
 import { getCategoriesByType, CategoryType, AccountType } from '../../shared/enums/index.js';
 import type { CategoryName } from '../../shared/enums/index.js';
 import { minorUnitsToDecimal, decimalToMinorUnits, moneyDtoSchema, type Currency } from '../../shared/money/index.js';
@@ -58,6 +58,7 @@ async function requireAccount(
   householdId: string,
   currency: Currency,
 ): Promise<{ id: string; type: string; currency: string; closingDay: number | null; dueDay: number | null }> {
+  await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
   const account = await tx.account.findFirst({
     where: { id: accountId, householdId, isActive: true },
     select: { id: true, type: true, currency: true, closingDay: true, dueDay: true },
@@ -182,10 +183,13 @@ export async function createTransactionV1(
         return existingDto;
       }
       const recurring = await tx.recurringTransaction.findFirst({
-        where: { id: recurringOccurrence.recurringTransactionId, householdId, accountId: input.accountId },
-        select: { id: true },
+        where: { id: recurringOccurrence.recurringTransactionId, householdId },
+        include: { account: { select: { currency: true } } },
       });
       if (!recurring) throw new NotFoundError('Recurring transaction');
+      if (recurring.account.currency !== money.currency) {
+        throw new BadRequestError('Occurrence account currency must match the recurring schedule');
+      }
     }
     const account = await requireAccount(tx, input.accountId, householdId, money.currency);
     const categoryCode = await validateCategory(tx, input.categoryCode, householdId, type);
@@ -287,6 +291,7 @@ export async function updateTransactionV1(
   householdId: string,
   userId: string,
   input: UpdateTransactionV1Input,
+  options: { allowOccurrenceAccountChange?: boolean } = {},
 ): Promise<TransactionV1Dto> {
   const identity = {
     userId,
@@ -301,8 +306,23 @@ export async function updateTransactionV1(
       include: { account: { select: { id: true, type: true, currency: true, closingDay: true, dueDay: true } } },
     });
     if (!existing || !existing.account) throw new NotFoundError('Transaction');
+    await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${existing.account.id}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
     if (existing.version !== input.expectedVersion) throw new VersionConflictError();
-    const currency = validateCurrency(existing.account.currency);
+    const accountChangeRequested = input.accountId !== undefined && input.accountId !== existing.account.id;
+    let nextAccount = existing.account;
+    if (accountChangeRequested) {
+      if (!options.allowOccurrenceAccountChange || !existing.recurringTransactionId || existing.paid) {
+        throw new BadRequestError('Only an unpaid recurring occurrence can be reassigned to another account');
+      }
+      await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${input.accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+      const selectedAccount = await tx.account.findFirst({ where: { id: input.accountId, householdId, isActive: true } });
+      if (!selectedAccount) throw new NotFoundError('Active account');
+      if (existing.account.type === AccountType.CREDIT || selectedAccount.type === AccountType.CREDIT) {
+        throw new OccurrenceAccountConflictError();
+      }
+      nextAccount = selectedAccount;
+    }
+    const currency = validateCurrency(nextAccount.currency);
     const kind = prismaTypeToKind(existing.type);
     const nextAmount = input.amount ? minorUnitsToDecimal(input.amount) : existing.amount;
     if (input.amount && input.amount.currency !== currency) throw new BadRequestError('Transaction currency must match account currency');
@@ -339,12 +359,13 @@ export async function updateTransactionV1(
       await applyBalanceChange(tx, existing.account.id, balanceChange(existing.amount, kind, existing.account.type).negated());
     }
     if (nextPaid) {
-      await applyBalanceChange(tx, existing.account.id, balanceChange(nextAmount, kind, existing.account.type));
+      await applyBalanceChange(tx, nextAccount.id, balanceChange(nextAmount, kind, nextAccount.type));
     }
 
     const update = await tx.transaction.updateMany({
       where: { id: existing.id, householdId, version: input.expectedVersion, deletedAt: null },
       data: {
+        ...(accountChangeRequested ? { accountId: nextAccount.id } : {}),
         amount: nextAmount,
         categoryName: nextCode,
         date: input.occurredAt ? civilDate(input.occurredAt) : undefined,

@@ -156,6 +156,7 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
         properties: {
           clientMutationId: { type: 'string', format: 'uuid' },
           expectedVersion: { type: 'integer', minimum: 1 },
+          accountId: { type: 'string', format: 'uuid', description: 'Only recurring occurrence flows may reassign an unpaid occurrence account' },
           amount: {
             type: 'object',
             required: ['minorUnits', 'currency'],

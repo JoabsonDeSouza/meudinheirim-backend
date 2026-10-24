@@ -143,6 +143,7 @@ export async function recurringV1Routes(app: FastifyInstance): Promise<void> {
       params: { type: 'object', required: ['recurringId'], properties: { recurringId: { type: 'string', format: 'uuid' } } },
       querystring: { type: 'object', properties: { householdId: { type: 'string', format: 'uuid' } }, additionalProperties: false },
       body: { type: 'object', minProperties: 1, additionalProperties: false, properties: {
+        accountId: { type: 'string', format: 'uuid', description: 'Account for future occurrences; currency must match the current schedule' },
         categoryCode: { type: 'string' },
         amount: { type: 'object', required: ['minorUnits', 'currency'], additionalProperties: false, properties: {
           minorUnits: { type: 'integer', minimum: 1 }, currency: { type: 'string', enum: ['BRL', 'USD'] },
@@ -191,12 +192,13 @@ export async function recurringV1Routes(app: FastifyInstance): Promise<void> {
       } },
       body: { type: 'object', required: ['amount', 'clientMutationId'], properties: {
         householdId: { type: 'string', format: 'uuid' },
+        accountId: { type: 'string', format: 'uuid', description: 'Optional account for this unpaid occurrence; does not pay a credit-card invoice' },
         amount: { type: 'object', required: ['minorUnits', 'currency'], properties: {
           minorUnits: { type: 'integer', minimum: 1 }, currency: { type: 'string', enum: ['BRL', 'USD'] },
         }, additionalProperties: false }, clientMutationId: { type: 'string', format: 'uuid' },
       }, additionalProperties: false },
-      response: { 200: { type: 'object', required: ['recurringTransactionId', 'date', 'transactionId', 'status', 'amount', 'replayed'], additionalProperties: false, properties: {
-        recurringTransactionId: { type: 'string', format: 'uuid' }, date: { type: 'string', format: 'date' }, transactionId: { type: 'string', format: 'uuid' },
+      response: { 200: { type: 'object', required: ['recurringTransactionId', 'date', 'transactionId', 'accountId', 'status', 'amount', 'replayed'], additionalProperties: false, properties: {
+        recurringTransactionId: { type: 'string', format: 'uuid' }, date: { type: 'string', format: 'date' }, transactionId: { type: 'string', format: 'uuid' }, accountId: { type: 'string', format: 'uuid' },
         status: { type: 'string', enum: ['PAID'] }, amount: moneyOpenApiSchema, replayed: { type: 'boolean' },
       } } },
     },

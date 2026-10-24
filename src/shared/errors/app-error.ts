@@ -122,6 +122,18 @@ export class VersionConflictError extends AppError {
   }
 }
 
+export class AccountArchiveBlockedError extends AppError {
+  constructor(reasons: readonly string[]) {
+    super(`Account cannot be archived: ${reasons.join(', ')}`, 409, 'ACCOUNT_ARCHIVE_BLOCKED');
+  }
+}
+
+export class OccurrenceAccountConflictError extends AppError {
+  constructor(message: string = 'A materialized card occurrence cannot be reassigned; use the credit-card invoice lifecycle') {
+    super(message, 409, 'RECURRING_OCCURRENCE_ACCOUNT_CONFLICT');
+  }
+}
+
 export class IdempotencyConflictError extends AppError {
   constructor() {
     super('clientMutationId was reused with a different payload', 409, 'IDEMPOTENCY_CONFLICT');
@@ -149,4 +161,3 @@ export class RateLimitError extends AppError {
     super(message, 429, 'RATE_LIMIT_EXCEEDED');
   }
 }
-

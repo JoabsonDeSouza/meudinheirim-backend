@@ -176,4 +176,109 @@ describe('recurring occurrence idempotency', () => {
     expect(cancelled.json().isActive).toBe(false);
     expect(await prisma.transaction.count({ where: { recurringTransactionId: recurringId, paid: true, deletedAt: null } })).toBe(1);
   });
+
+  it('reassigns an unpaid materialized bank occurrence atomically to another same-currency bank account', async () => {
+    const target = await prisma.account.create({
+      data: {
+        householdId, name: 'Alternate recurring account', type: 'CHECKING', currency: 'BRL',
+        balance: new Prisma.Decimal('50.00'), totalBalance: new Prisma.Decimal('50.00'), availableBalance: new Prisma.Decimal('50.00'),
+      },
+    });
+    const today = new Date();
+    const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
+    const dateKey = date.toISOString().slice(0, 10);
+    const recurring = await prisma.recurringTransaction.create({
+      data: {
+        householdId, accountId, categoryName: 'FOOD', amount: new Prisma.Decimal('10.00'), frequency: 'DAILY',
+        recurrenceMode: 'ONCE', occurrencesLimit: 1, startDate: date, nextRunAt: date,
+      },
+    });
+    const { executeRecurringTransaction } = await import('../../src/modules/recurring-transactions/recurring-transactions.service.js');
+    const pending = await executeRecurringTransaction(recurring.id, householdId, { date, paid: false });
+    const originalSource = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
+    const paid = await app.inject({
+      method: 'POST',
+      url: `/v1/recurring-transactions/${recurring.id}/occurrences/${dateKey}/pay`,
+      headers: { authorization: 'Bearer recurring-user' },
+      payload: { householdId, accountId: target.id, amount: { minorUnits: 1000, currency: 'BRL' }, clientMutationId: '58c59de5-91e9-4e35-a12b-1f47930f434c' },
+    });
+    expect(paid.statusCode).toBe(200);
+    expect(paid.json()).toMatchObject({ accountId: target.id, transactionId: pending.transaction.id, replayed: false });
+    const reassigned = await prisma.transaction.findUniqueOrThrow({ where: { id: pending.transaction.id } });
+    expect(reassigned).toMatchObject({ accountId: target.id, paid: true, invoiceId: null });
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: accountId } })).availableBalance.toFixed(2)).toBe(originalSource.availableBalance.toFixed(2));
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: target.id } })).availableBalance.toFixed(2)).toBe('40.00');
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/v1/recurring-transactions/${recurring.id}/occurrences/${dateKey}/pay`,
+      headers: { authorization: 'Bearer recurring-user' },
+      payload: { householdId, accountId: target.id, amount: { minorUnits: 1000, currency: 'BRL' }, clientMutationId: '658a1432-857f-4fe0-9f94-4c19f3e699d5' },
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json()).toMatchObject({ accountId: target.id, replayed: true });
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: target.id } })).availableBalance.toFixed(2)).toBe('40.00');
+  });
+
+  it('creates a card charge, not an invoice payment, when an unpaid occurrence selects a credit card', async () => {
+    const card = await prisma.account.create({
+      data: {
+        householdId, name: 'Occurrence card', type: 'CREDIT', currency: 'BRL',
+        balance: new Prisma.Decimal('0.00'), totalBalance: new Prisma.Decimal('0.00'), availableBalance: new Prisma.Decimal('0.00'),
+        creditLimit: new Prisma.Decimal('500.00'), totalLimit: new Prisma.Decimal('500.00'), availableLimit: new Prisma.Decimal('500.00'),
+        dueDay: 15, closingDay: 5,
+      },
+    });
+    const now = new Date();
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const dateKey = date.toISOString().slice(0, 10);
+    const recurring = await prisma.recurringTransaction.create({
+      data: {
+        householdId, accountId, categoryName: 'FOOD', amount: new Prisma.Decimal('12.34'), frequency: 'DAILY',
+        recurrenceMode: 'ONCE', occurrencesLimit: 1, startDate: date, nextRunAt: date,
+      },
+    });
+    const payment = await app.inject({
+      method: 'POST',
+      url: `/v1/recurring-transactions/${recurring.id}/occurrences/${dateKey}/pay`,
+      headers: { authorization: 'Bearer recurring-user' },
+      payload: { householdId, accountId: card.id, amount: { minorUnits: 1234, currency: 'BRL' }, clientMutationId: 'ad70c904-5aaa-4a20-bd73-53faf8017804' },
+    });
+    expect(payment.statusCode).toBe(200);
+    expect(payment.json()).toMatchObject({ accountId: card.id, status: 'PAID' });
+    const transaction = await prisma.transaction.findUniqueOrThrow({ where: { id: payment.json().transactionId } });
+    expect(transaction).toMatchObject({ accountId: card.id, paid: true });
+    expect(transaction.invoiceId).not.toBeNull();
+    expect(await prisma.invoicePayment.count({ where: { invoiceId: transaction.invoiceId! } })).toBe(0);
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: card.id } })).balance.toFixed(2)).toBe('12.34');
+  });
+
+  it('rejects retargeting a materialized bank occurrence to a card without changing its transaction', async () => {
+    const card = await prisma.account.create({
+      data: {
+        householdId, name: 'Blocked occurrence card', type: 'CREDIT', currency: 'BRL',
+        creditLimit: new Prisma.Decimal('500.00'), totalLimit: new Prisma.Decimal('500.00'), availableLimit: new Prisma.Decimal('500.00'),
+        dueDay: 15, closingDay: 5,
+      },
+    });
+    const now = new Date();
+    const date = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const dateKey = date.toISOString().slice(0, 10);
+    const recurring = await prisma.recurringTransaction.create({
+      data: {
+        householdId, accountId, categoryName: 'FOOD', amount: new Prisma.Decimal('12.34'), frequency: 'DAILY',
+        recurrenceMode: 'ONCE', occurrencesLimit: 1, startDate: date, nextRunAt: date,
+      },
+    });
+    const { executeRecurringTransaction } = await import('../../src/modules/recurring-transactions/recurring-transactions.service.js');
+    const pending = await executeRecurringTransaction(recurring.id, householdId, { date, paid: false });
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/recurring-transactions/${recurring.id}/occurrences/${dateKey}/pay`,
+      headers: { authorization: 'Bearer recurring-user' },
+      payload: { householdId, accountId: card.id, amount: { minorUnits: 1234, currency: 'BRL' }, clientMutationId: '8237fc2a-5060-43a8-a988-260e924096d8' },
+    });
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toMatchObject({ error: { code: 'RECURRING_OCCURRENCE_ACCOUNT_CONFLICT' } });
+    expect(await prisma.transaction.findUniqueOrThrow({ where: { id: pending.transaction.id } })).toMatchObject({ accountId, paid: false, invoiceId: null });
+  });
 });

@@ -4,7 +4,7 @@ import type { TransactionType as Prisma_TransactionType } from '../../generated/
 
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
-import { NotFoundError, BadRequestError } from '../../shared/errors/index.js';
+import { AccountArchiveBlockedError, NotFoundError, BadRequestError } from '../../shared/errors/index.js';
 import { CategoryName, AccountType } from '../../shared/enums/index.js';
 import { applyTransfer } from '../../shared/services/balance.service.js';
 import type {
@@ -463,6 +463,22 @@ export async function updateAccount(accountId: string, householdId: string, inpu
   if (!currentAccount) {
     throw new NotFoundError('Account');
   }
+  if (input.type !== undefined && input.type !== currentAccount.type) {
+    throw new BadRequestError('Account type cannot be changed after creation');
+  }
+  if (input.currency !== undefined && input.currency !== currentAccount.currency) {
+    throw new BadRequestError('Account currency cannot be changed after creation');
+  }
+  if (currentAccount.type === AccountType.CREDIT && input.balance !== undefined) {
+    throw new BadRequestError('Credit-card balances can only change through the invoice lifecycle');
+  }
+  if (input.isActive === false && currentAccount.isActive) {
+    if (Object.keys(input).some((key) => key !== 'isActive')) {
+      throw new BadRequestError('Archive the account separately from editing its details');
+    }
+    const archived = await archiveAccount(accountId, householdId);
+    return { ...archived, balance: archived.balance.toNumber(), creditLimit: archived.creditLimit?.toNumber() ?? null };
+  }
 
   // Se for cartão de crédito e linkedAccountId for atualizado, buscar cor da conta vinculada
   let accountColor = input.color;
@@ -509,6 +525,7 @@ export async function updateAccount(accountId: string, householdId: string, inpu
     ...(input.last4 !== undefined && { last4: input.last4 }),
     ...(input.balance !== undefined && { balance: new Prisma.Decimal(input.balance) }), // Permitir atualização direta (usado para pagamento de fatura)
     ...(input.isActive !== undefined && { isActive: input.isActive }),
+    ...(input.isActive === true && { status: 'ACTIVE' as const }),
     ...(accountColor !== undefined && { color: accountColor }),
     ...(input.icon !== undefined && { icon: input.icon }),
     ...(input.creditLimit !== undefined && {
@@ -575,6 +592,66 @@ export async function updateAccount(accountId: string, householdId: string, inpu
     balance: account.balance.toNumber(),
     creditLimit: account.creditLimit ? account.creditLimit.toNumber() : null,
   };
+}
+
+export async function setPrimaryCreditCard(accountId: string, householdId: string): Promise<Awaited<ReturnType<typeof prisma.account.findUniqueOrThrow>>> {
+  const card = await prisma.account.findFirst({ where: { id: accountId, householdId } });
+  if (!card) throw new NotFoundError('Account');
+  if (card.type !== AccountType.CREDIT) throw new BadRequestError('Only credit cards can be marked as primary');
+  if (!card.isActive) throw new BadRequestError('Archived credit cards cannot be marked as primary');
+
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`primary-card:${householdId}:${card.currency}`}))`;
+    await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+    const current = await tx.account.findFirst({
+      where: { id: accountId, householdId, type: AccountType.CREDIT, currency: card.currency, isActive: true },
+    });
+    if (!current) throw new NotFoundError('Active credit card');
+    await tx.account.updateMany({
+      where: { householdId, currency: card.currency, type: AccountType.CREDIT, isPrimaryCard: true, id: { not: accountId } },
+      data: { isPrimaryCard: false, version: { increment: 1 } },
+    });
+    return tx.account.update({
+      where: { id: accountId },
+      data: current.isPrimaryCard ? {} : { isPrimaryCard: true, version: { increment: 1 } },
+    });
+  });
+}
+
+export async function archiveAccount(accountId: string, householdId: string): Promise<Awaited<ReturnType<typeof prisma.account.findUniqueOrThrow>>> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+    const account = await tx.account.findFirst({ where: { id: accountId, householdId } });
+    if (!account) throw new NotFoundError('Account');
+    if (!account.isActive) return account;
+
+    const [pendingTransactions, activeSchedules, activeInvoices] = await Promise.all([
+      tx.transaction.count({
+        where: {
+          householdId,
+          paid: false,
+          deletedAt: null,
+          OR: [{ accountId }, { fromAccountId: accountId }, { toAccountId: accountId }],
+        },
+      }),
+      tx.recurringTransaction.count({ where: { householdId, accountId, isActive: true } }),
+      account.type === AccountType.CREDIT
+        ? tx.creditCardInvoice.count({ where: { householdId, cardAccountId: accountId, status: { in: ['OPEN', 'CLOSED'] } } })
+        : Promise.resolve(0),
+    ]);
+    const blockers: string[] = [];
+    if (pendingTransactions > 0) blockers.push('PENDING_TRANSACTIONS');
+    if (activeSchedules > 0) blockers.push('ACTIVE_RECURRING_SCHEDULES');
+    if (activeInvoices > 0) blockers.push('UNPAID_INVOICES');
+    if (!account.balance.isZero() || !account.totalBalance.isZero() || !account.availableBalance.isZero()) blockers.push('NONZERO_BALANCE');
+    if (!account.allocatedBalance.isZero()) blockers.push('ALLOCATED_BALANCE');
+    if (blockers.length > 0) throw new AccountArchiveBlockedError(blockers);
+
+    return tx.account.update({
+      where: { id: accountId },
+      data: { isActive: false, status: 'INACTIVE', isPrimaryCard: false, version: { increment: 1 } },
+    });
+  });
 }
 
 /**
@@ -837,7 +914,3 @@ export async function getAccountsSummary(householdId: string): Promise<{ totalAc
 
   return summary;
 }
-
-
-
-

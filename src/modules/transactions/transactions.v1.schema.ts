@@ -37,6 +37,7 @@ export type CreateTransactionV1Input = z.infer<typeof createTransactionV1Schema>
 export const updateTransactionV1Schema = z.object({
   clientMutationId: z.string().uuid(),
   expectedVersion: z.number().int().positive(),
+  accountId: z.string().uuid().optional(),
   amount: transactionAmountV1Schema.optional(),
   categoryCode: categoryNameSchema.optional(),
   occurredAt: z.string().datetime().optional(),
