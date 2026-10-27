@@ -82,6 +82,7 @@ function payload(clientMutationId: string, overrides: Record<string, unknown> = 
     accountId: cardAccountId,
     occurredAt: '2026-01-31T12:00:00.000Z',
     timeZone: 'America/Sao_Paulo',
+    paid: false,
     plan: { type: 'INSTALLMENTS', count: 4 },
     ...overrides,
   };
@@ -99,7 +100,7 @@ describe('V1 transaction plans', () => {
     const body = response.json() as {
       type: string;
       totalAmount: { minorUnits: number; currency: string };
-      items: Array<{ id: string; amount: { minorUnits: number }; occurredAt: string; installmentNumber: number; totalInstallments: number; installmentId: string; invoiceId: string | null }>;
+      items: Array<{ id: string; amount: { minorUnits: number }; occurredAt: string; installmentNumber: number; totalInstallments: number; installmentId: string; invoiceId: string | null; paid: boolean }>;
     };
     expect(body.type).toBe('INSTALLMENTS');
     expect(body.totalAmount).toEqual({ minorUnits: 10001, currency: 'BRL' });
@@ -110,8 +111,10 @@ describe('V1 transaction plans', () => {
     expect(body.items.every((item) => item.totalInstallments === 4 && item.installmentId === body.items[0].installmentId)).toBe(true);
     expect(body.items.every((item) => item.invoiceId !== null)).toBe(true);
     expect(new Set(body.items.map((item) => item.invoiceId)).size).toBe(4);
+    expect(body.items.every((item) => !item.paid)).toBe(true);
 
     const { prisma } = await import('../../src/shared/db/prisma.js');
+    expect(await prisma.invoicePayment.count({ where: { invoiceId: { in: body.items.map((item) => item.invoiceId!) } } })).toBe(0);
     const persisted = await prisma.transaction.findMany({ where: { installmentId: body.items[0].installmentId }, orderBy: { installmentNumber: 'asc' } });
     expect(persisted).toHaveLength(4);
     expect(persisted.map((item) => [item.installmentNumber, item.totalInstallments])).toEqual([[1, 4], [2, 4], [3, 4], [4, 4]]);
