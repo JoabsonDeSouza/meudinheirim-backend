@@ -21,7 +21,7 @@ export const transactionPlanV1InputSchema = z.discriminatedUnion('type', [
 export const createTransactionPlanV1Schema = z.object({
   householdId: z.string().uuid().optional(),
   clientMutationId: z.string().uuid(),
-  kind: z.literal('expense'),
+  kind: z.enum(['expense', 'income']),
   totalAmount: moneyDtoSchema.refine((money) => money.minorUnits > 0, 'Transaction amount must be positive'),
   categoryCode: categoryNameSchema,
   accountId: z.string().uuid(),
@@ -31,6 +31,13 @@ export const createTransactionPlanV1Schema = z.object({
   paid: z.boolean().default(true),
   plan: transactionPlanV1InputSchema,
 }).strict().superRefine((input, ctx) => {
+  if (input.plan.type === 'INSTALLMENTS' && input.kind !== 'expense') {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['kind'],
+      message: 'Credit-card installments support expenses only',
+    });
+  }
   if (input.plan.type === 'INSTALLMENTS' && input.totalAmount.minorUnits < input.plan.count) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,

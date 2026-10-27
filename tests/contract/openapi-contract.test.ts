@@ -18,6 +18,10 @@ interface OpenApiOperation {
   };
 }
 
+interface OpenApiField {
+  readonly enum?: readonly unknown[];
+}
+
 interface OpenApiDocument {
   readonly openapi: string;
   readonly paths: Readonly<Record<string, OpenApiPath>>;
@@ -65,6 +69,13 @@ describe('versioned OpenAPI contract', () => {
     expect(document.paths['/v1/recurring-transactions/{recurringId}']?.patch).toBeDefined();
     expect(document.paths['/v1/recurring-transactions/{recurringId}']?.delete).toBeDefined();
     expect(document.paths['/v1/recurring-transactions/{recurringId}/occurrences/{occurrenceDate}/pay']?.post).toBeDefined();
+  });
+
+  it('documents income as a supported transaction-plan kind', () => {
+    const document = app.swagger() as OpenApiDocument;
+    const operation = document.paths['/v1/transactions/plans']?.post as OpenApiOperation | undefined;
+    const kind = operation?.requestBody?.content?.['application/json']?.schema?.properties?.kind as OpenApiField | undefined;
+    expect(kind?.enum).toEqual(['expense', 'income']);
   });
 
   it('documents public auth configuration and health/readiness routes', () => {

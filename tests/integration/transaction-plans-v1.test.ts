@@ -168,6 +168,31 @@ describe('V1 transaction plans', () => {
     expect(occurrences.json().items.map((item: { date: string }) => item.date)).toEqual(['2026-01-31', '2026-02-28', '2026-03-31']);
   });
 
+  it('creates monthly income recurrence with an income first occurrence', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/transactions/plans',
+      headers: { authorization: 'Bearer transaction-plan-owner' },
+      payload: payload('12345678-9abc-4def-8123-456789abcdef', {
+        accountId: bankAccountId,
+        categoryCode: 'SALARY',
+        kind: 'income',
+        plan: { type: 'RECURRING_MONTHLY' },
+      }),
+    });
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(201);
+    const body = response.json() as {
+      recurringTransaction: { id: string; categoryCode: string; frequency: string; recurrenceMode: string };
+      firstOccurrence: { id: string; kind: string; categoryCode: string };
+    };
+    expect(body.recurringTransaction).toMatchObject({ categoryCode: 'SALARY', frequency: 'MONTHLY', recurrenceMode: 'ALWAYS' });
+    expect(body.firstOccurrence).toMatchObject({ kind: 'income', categoryCode: 'SALARY' });
+    const { prisma } = await import('../../src/shared/db/prisma.js');
+    const persisted = await prisma.transaction.findUnique({ where: { id: body.firstOccurrence.id } });
+    expect(persisted?.type).toBe('INCOME');
+    expect(persisted?.recurringTransactionId).toBe(body.recurringTransaction.id);
+  });
+
   it('rejects installments on bank accounts and requires authentication', async () => {
     const unauthorized = await app.inject({ method: 'POST', url: '/v1/transactions/plans', payload: payload('d3456789-abcd-4ef0-9123-456789abcdef') });
     expect(unauthorized.statusCode).toBe(401);

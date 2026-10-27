@@ -32,12 +32,12 @@ Common request fields:
 }
 ```
 
-`kind` is `expense` only. `totalAmount.minorUnits` must be positive and contain at least one minor unit per installment. `plan` is exactly one of:
+`kind` is `expense` or `income`; `categoryCode` must match the selected kind using the existing category rules. `totalAmount.minorUnits` must be positive and contain at least one minor unit per installment. `plan` is exactly one of:
 
-- `{ "type": "INSTALLMENTS", "count": 2..6 }`: account must be an active credit card. The total is divided as evenly as possible; remaining minor units are assigned one each to the earliest installments (e.g. 10001/4 => 2501, 2500, 2500, 2500). Rows sum exactly to the input total. The initial civil date is occurrence one. Later dates use the original day anchor; days 29–31 clamp to month-end and resume the original day in later months.
-- `{ "type": "RECURRING_MONTHLY" }`: account may be any active account. Creates an `ALWAYS` monthly schedule and the submitted transaction as occurrence one, atomically. `startDate` and `lastRunDate` are the first civil date; `nextRunAt` is the next monthly anchor date. The existing recurring occurrence uniqueness/link behavior prevents scheduler duplication.
+- `{ "type": "INSTALLMENTS", "count": 2..6 }`: expense-only; account must be an active credit card. The total is divided as evenly as possible; remaining minor units are assigned one each to the earliest installments (e.g. 10001/4 => 2501, 2500, 2500, 2500). Rows sum exactly to the input total. The initial civil date is occurrence one. Later dates use the original day anchor; days 29–31 clamp to month-end and resume the original day in later months.
+- `{ "type": "RECURRING_MONTHLY" }`: accepts an expense or income category, and the account may be any active account. Creates an `ALWAYS` monthly schedule and the submitted expense/income transaction as occurrence one, atomically. `startDate` and `lastRunDate` are the first civil date; `nextRunAt` is the next monthly anchor date. The existing recurring occurrence uniqueness/link behavior prevents scheduler duplication. The legacy occurrence payment route remains expense-only; receipt of a recurring income is not represented as an expense payment.
 
-The two modes are mutually exclusive by the strict discriminated request schema. Installments are not supported for non-credit accounts. Credit-card installment rows each pass through the existing billing-cycle assignment logic using the plan's transaction date/time and time zone. Each row is a charge, not an invoice payment; invoice settlement remains a separate lifecycle operation. Existing card closing/due-day clamping is unchanged.
+The two modes are mutually exclusive by the strict discriminated request schema. Income installments and installments on non-credit accounts are not supported. Credit-card installment rows each pass through the existing billing-cycle assignment logic using the plan's transaction date/time and time zone. Each row is a charge, not an invoice payment; invoice settlement remains a separate lifecycle operation. Existing card closing/due-day clamping is unchanged.
 
 ### Installment response (201)
 

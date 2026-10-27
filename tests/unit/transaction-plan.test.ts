@@ -23,6 +23,8 @@ describe('transaction plan contract', () => {
 
   it('accepts monthly recurrence and rejects invalid or conflicting options', () => {
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'RECURRING_MONTHLY' } }).success).toBe(true);
+    expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, kind: 'income', categoryCode: 'SALARY', plan: { type: 'RECURRING_MONTHLY' } }).success).toBe(true);
+    expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, kind: 'income', categoryCode: 'SALARY' }).success).toBe(false);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 1 } }).success).toBe(false);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 7 } }).success).toBe(false);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, totalAmount: { minorUnits: 3, currency: 'BRL' } }).success).toBe(false);

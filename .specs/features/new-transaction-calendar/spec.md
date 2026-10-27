@@ -16,7 +16,7 @@ Extend the versioned transaction API for a purchase entered as a total with 2–
 
 - Additive V1 contract for a planned transaction with mutually exclusive installment and recurring options; legacy single transaction requests stay unchanged.
 - Installment flow is expense-only, credit-card-only, accepts the purchase total, and emits 2–6 monthly transaction rows that sum exactly to the supplied total.
-- Recurring flow is expense-only and monthly/continuous; the entered transaction is occurrence one, the recurring rule starts with that occurrence, and the next run is the next monthly anchor date. Persist the occurrence link/marker atomically so the scheduler cannot create a duplicate.
+- Recurring flow is monthly/continuous and supports expense or income categories; the entered transaction is occurrence one, the recurring rule starts with that occurrence, and the next run is the next monthly anchor date. Persist the occurrence link/marker atomically so the scheduler cannot create a duplicate. Installments remain expense-only.
 - Installments and recurrence cannot be combined. Bank/debit accounts cannot have installment count. Card purchase does not settle an invoice.
 - Catalog work may expose existing stable codes only until the 11 category names/icons are supplied and verified.
 - Calendar reads use existing `GET /v1/transactions` date filtering plus `GET /v1/recurring-transactions/occurrences`; avoid changing the shipped transaction DTO until Mobile/orchestrator confirms it can consume additive fields.

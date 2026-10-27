@@ -158,7 +158,7 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
         properties: {
           householdId: { type: 'string', format: 'uuid' },
           clientMutationId: { type: 'string', format: 'uuid' },
-          kind: { type: 'string', const: 'expense' },
+          kind: { type: 'string', enum: ['expense', 'income'], description: 'Income is supported for monthly recurrence only; installments require expense' },
           totalAmount: transactionPlanMoneySchema,
           categoryCode: { type: 'string' },
           accountId: { type: 'string', format: 'uuid' },
