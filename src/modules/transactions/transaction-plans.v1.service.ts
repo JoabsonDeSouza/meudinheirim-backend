@@ -3,9 +3,10 @@ import type { Prisma } from '../../generated/prisma/client.js';
 import { BadRequestError, NotFoundError } from '../../shared/errors/index.js';
 import { AccountType, RecurrenceFrequency } from '../../shared/enums/index.js';
 import { prisma } from '../../shared/db/prisma.js';
+import { civilDateStringAtInstant } from '../credit-cards/domain/billing-cycle.js';
 import { appendSyncChange, findMutationReplay, payloadHash, saveMutationReceipt } from '../../shared/sync/idempotency.js';
 import { createRecurringManagedV1WithTx } from '../recurring-transactions/recurring.v1.service.js';
-import { calculateMonthlyInstallmentDates, splitTotalIntoInstallments } from './transaction-plan.js';
+import { calculateMonthlyInstallmentDates, instantAtCivilDateLike, splitTotalIntoInstallments } from './transaction-plan.js';
 import { createTransactionV1WithTx } from './transactions.v1.service.js';
 import type { CreateTransactionV1Input } from './transactions.v1.schema.js';
 import { transactionPlanV1ResponseSchema, type CreateTransactionPlanV1Input, type TransactionPlanV1Response } from './transaction-plans.v1.schema.js';
@@ -65,14 +66,16 @@ export async function createTransactionPlanV1(
 
     if (input.plan.type === 'INSTALLMENTS') {
       if (account.type !== AccountType.CREDIT) throw new BadRequestError('Installments require an active credit-card account');
-      const startDate = new Date(`${input.occurredAt.slice(0, 10)}T00:00:00.000Z`);
+      const firstOccurredAt = new Date(input.occurredAt);
+      const firstDate = civilDateStringAtInstant(input.occurredAt, input.timeZone);
+      const startDate = new Date(`${firstDate}T00:00:00.000Z`);
       const dates = calculateMonthlyInstallmentDates(startDate, input.plan.count);
       const amounts = splitTotalIntoInstallments(input.totalAmount.minorUnits, input.plan.count);
       const installmentId = randomUUID();
       const items = [];
 
       for (const [index, date] of dates.entries()) {
-        const occurredAt = index === 0 ? input.occurredAt : `${civilDate(date)}${input.occurredAt.slice(10)}`;
+        const occurredAt = index === 0 ? input.occurredAt : instantAtCivilDateLike(date, firstOccurredAt, input.timeZone).toISOString();
         const transaction = await createTransactionV1WithTx(tx, transactionInput(input, amounts[index], occurredAt), householdId, undefined, {
           installmentId,
           installmentNumber: index + 1,
@@ -94,7 +97,7 @@ export async function createTransactionPlanV1(
       return response;
     }
 
-    const firstDate = input.occurredAt.slice(0, 10);
+    const firstDate = civilDateStringAtInstant(input.occurredAt, input.timeZone);
     const monthlyDates = calculateMonthlyInstallmentDates(new Date(`${firstDate}T00:00:00.000Z`), 2);
     const nextRunAt = civilDate(monthlyDates[1]);
     const recurringTransaction = await createRecurringManagedV1WithTx(tx, {
@@ -114,7 +117,7 @@ export async function createTransactionPlanV1(
       tx,
       transactionInput(input, input.totalAmount.minorUnits, input.occurredAt),
       householdId,
-      { recurringTransactionId: recurringTransaction.id, occurrenceDate: firstOccurrenceDate },
+      { recurringTransactionId: recurringTransaction.id, occurrenceDate: firstOccurrenceDate, dateBasis: 'TIME_ZONE' },
     );
     await tx.recurringTransaction.update({ where: { id: recurringTransaction.id }, data: { lastRunDate: firstOccurrenceDate } });
     const recurringResponse = { ...recurringTransaction, lastRunDate: firstDate };

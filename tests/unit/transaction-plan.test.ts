@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createTransactionPlanV1Schema } from '../../src/modules/transactions/transaction-plans.v1.schema.js';
-import { calculateMonthlyInstallmentDates, splitTotalIntoInstallments } from '../../src/modules/transactions/transaction-plan.js';
+import { calculateMonthlyInstallmentDates, instantAtCivilDateLike, splitTotalIntoInstallments } from '../../src/modules/transactions/transaction-plan.js';
 
 const validPlan = {
   clientMutationId: 'a0123456-789b-4cde-8f01-23456789abcd',
@@ -19,6 +19,7 @@ describe('transaction plan contract', () => {
     expect(createTransactionPlanV1Schema.safeParse(validPlan).success).toBe(true);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 2 } }).success).toBe(true);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 6 } }).success).toBe(true);
+    expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, occurredAt: '2026-01-31T12:00:00+00:00' }).success).toBe(true);
   });
 
   it('accepts monthly recurrence and rejects invalid or conflicting options', () => {
@@ -51,5 +52,18 @@ describe('transaction installment math', () => {
     expect(calculateMonthlyInstallmentDates(new Date('2028-01-31T00:00:00.000Z'), 3).map((date) => date.toISOString().slice(0, 10))).toEqual([
       '2028-01-31', '2028-02-29', '2028-03-31',
     ]);
+  });
+
+  it('retains the local civil date and wall-clock time across UTC offsets', () => {
+    const nextOccurrence = instantAtCivilDateLike(
+      new Date('2026-02-28T00:00:00.000Z'),
+      new Date('2026-01-30T15:00:00.000Z'),
+      'Asia/Tokyo',
+    );
+    expect(nextOccurrence.toISOString()).toBe('2026-02-27T15:00:00.000Z');
+    const localParts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(nextOccurrence).map((part) => [part.type, part.value]));
+    expect(localParts).toMatchObject({ year: '2026', month: '02', day: '28', hour: '00', minute: '00' });
   });
 });

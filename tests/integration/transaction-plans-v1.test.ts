@@ -88,13 +88,23 @@ function payload(clientMutationId: string, overrides: Record<string, unknown> = 
   };
 }
 
+function localDate(instant: string, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+    .formatToParts(new Date(instant));
+  const value = (type: string): string => parts.find((part) => part.type === type)?.value ?? '';
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
+
 describe('V1 transaction plans', () => {
   it('creates 4 monthly card installments, conserves total cents, and assigns each billing cycle', async () => {
     const response = await app.inject({
       method: 'POST',
       url: '/v1/transactions/plans',
       headers: { authorization: 'Bearer transaction-plan-owner' },
-      payload: payload('a0123456-789b-4cde-8f01-23456789abcd'),
+      payload: payload('a0123456-789b-4cde-8f01-23456789abcd', {
+        occurredAt: '2026-01-31T00:00:00+09:00',
+        timeZone: 'Asia/Tokyo',
+      }),
     });
     expect(response.statusCode, JSON.stringify(response.json())).toBe(201);
     const body = response.json() as {
@@ -106,7 +116,7 @@ describe('V1 transaction plans', () => {
     expect(body.totalAmount).toEqual({ minorUnits: 10001, currency: 'BRL' });
     expect(body.items.map((item) => item.amount.minorUnits)).toEqual([2501, 2500, 2500, 2500]);
     expect(body.items.reduce((sum, item) => sum + item.amount.minorUnits, 0)).toBe(10001);
-    expect(body.items.map((item) => item.occurredAt.slice(0, 10))).toEqual(['2026-01-31', '2026-02-28', '2026-03-31', '2026-04-30']);
+    expect(body.items.map((item) => localDate(item.occurredAt, 'Asia/Tokyo'))).toEqual(['2026-01-31', '2026-02-28', '2026-03-31', '2026-04-30']);
     expect(body.items.map((item) => item.installmentNumber)).toEqual([1, 2, 3, 4]);
     expect(body.items.every((item) => item.totalInstallments === 4 && item.installmentId === body.items[0].installmentId)).toBe(true);
     expect(body.items.every((item) => item.invoiceId !== null)).toBe(true);
@@ -180,20 +190,25 @@ describe('V1 transaction plans', () => {
         accountId: bankAccountId,
         categoryCode: 'SALARY',
         kind: 'income',
+        occurredAt: '2026-01-31T00:00:00+09:00',
+        timeZone: 'Asia/Tokyo',
         plan: { type: 'RECURRING_MONTHLY' },
       }),
     });
     expect(response.statusCode, JSON.stringify(response.json())).toBe(201);
     const body = response.json() as {
       recurringTransaction: { id: string; categoryCode: string; frequency: string; recurrenceMode: string };
-      firstOccurrence: { id: string; kind: string; categoryCode: string };
+      firstOccurrence: { id: string; kind: string; categoryCode: string; occurredAt: string };
     };
-    expect(body.recurringTransaction).toMatchObject({ categoryCode: 'SALARY', frequency: 'MONTHLY', recurrenceMode: 'ALWAYS' });
-    expect(body.firstOccurrence).toMatchObject({ kind: 'income', categoryCode: 'SALARY' });
+    expect(body.recurringTransaction).toMatchObject({ categoryCode: 'SALARY', frequency: 'MONTHLY', recurrenceMode: 'ALWAYS', startDate: '2026-01-31' });
+    expect(body.firstOccurrence).toMatchObject({ kind: 'income', categoryCode: 'SALARY', occurredAt: '2026-01-30T15:00:00.000Z' });
     const { prisma } = await import('../../src/shared/db/prisma.js');
     const persisted = await prisma.transaction.findUnique({ where: { id: body.firstOccurrence.id } });
     expect(persisted?.type).toBe('INCOME');
     expect(persisted?.recurringTransactionId).toBe(body.recurringTransaction.id);
+    expect(await prisma.recurringOccurrence.count({
+      where: { recurringTransactionId: body.recurringTransaction.id, occurrenceDate: new Date('2026-01-31T00:00:00.000Z') },
+    })).toBe(1);
   });
 
   it('rejects installments on bank accounts and requires authentication', async () => {

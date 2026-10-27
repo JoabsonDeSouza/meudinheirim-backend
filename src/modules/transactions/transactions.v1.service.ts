@@ -8,6 +8,7 @@ import { createPaginatedResponse, buildPaginationArgs } from '../../shared/utils
 import { isCustomCategoryName, toCustomCategoryId, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import { prisma } from '../../shared/db/prisma.js';
 import { adjustInvoiceTotal, getOrCreateInvoiceForTransaction, signedInvoiceAmount } from '../credit-cards/domain/invoice-cycle.js';
+import { civilDateStringAtInstant } from '../credit-cards/domain/billing-cycle.js';
 import { appendSyncChange, findMutationReplay, payloadHash, saveMutationReceipt } from '../../shared/sync/idempotency.js';
 import { transactionV1DtoSchema, type CreateTransactionV1Input, type ListTransactionsV1Query, type TransactionV1Dto, type UpdateTransactionV1Input } from './transactions.v1.schema.js';
 
@@ -152,7 +153,7 @@ export async function createTransactionV1(
   input: CreateTransactionV1Input,
   householdId: string,
   userId: string,
-  recurringOccurrence?: { recurringTransactionId: string; occurrenceDate: Date },
+  recurringOccurrence?: { recurringTransactionId: string; occurrenceDate: Date; dateBasis?: 'UTC' | 'TIME_ZONE' },
 ): Promise<TransactionV1Dto> {
   const identity = {
     userId,
@@ -172,7 +173,7 @@ export async function createTransactionV1WithTx(
   tx: Prisma.TransactionClient,
   input: CreateTransactionV1Input,
   householdId: string,
-  recurringOccurrence?: { recurringTransactionId: string; occurrenceDate: Date },
+  recurringOccurrence?: { recurringTransactionId: string; occurrenceDate: Date; dateBasis?: 'UTC' | 'TIME_ZONE' },
   installment?: { installmentId: string; installmentNumber: number; totalInstallments: number },
 ): Promise<TransactionV1Dto> {
   const type = kindToPrismaType(input.kind);
@@ -181,11 +182,14 @@ export async function createTransactionV1WithTx(
   const occurredAt = new Date(input.occurredAt);
 
   if (recurringOccurrence) {
-    const occurrenceDate = civilDate(input.occurredAt);
-    if (occurrenceDate.getTime() !== civilDate(recurringOccurrence.occurrenceDate.toISOString()).getTime()) {
+    const occurrenceDateKey = recurringOccurrence.dateBasis === 'TIME_ZONE'
+      ? civilDateStringAtInstant(input.occurredAt, input.timeZone)
+      : civilDate(input.occurredAt).toISOString().slice(0, 10);
+    const linkedDateKey = recurringOccurrence.occurrenceDate.toISOString().slice(0, 10);
+    if (occurrenceDateKey !== linkedDateKey) {
       throw new BadRequestError('Transaction date must match its recurring occurrence date');
     }
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`recurring-occurrence:${recurringOccurrence.recurringTransactionId}:${occurrenceDate}`}))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`recurring-occurrence:${recurringOccurrence.recurringTransactionId}:${occurrenceDateKey}`}))`;
     const existing = await tx.recurringOccurrence.findUnique({
       where: { recurringTransactionId_occurrenceDate: { recurringTransactionId: recurringOccurrence.recurringTransactionId, occurrenceDate: recurringOccurrence.occurrenceDate } },
       include: { transaction: { include: { account: { select: { currency: true } } } } },

@@ -25,7 +25,7 @@ export const createTransactionPlanV1Schema = z.object({
   totalAmount: moneyDtoSchema.refine((money) => money.minorUnits > 0, 'Transaction amount must be positive'),
   categoryCode: categoryNameSchema,
   accountId: z.string().uuid(),
-  occurredAt: z.string().datetime(),
+  occurredAt: z.string().datetime({ offset: true }),
   timeZone: timeZoneSchema,
   note: z.string().max(255).optional(),
   paid: z.boolean().default(true),
