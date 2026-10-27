@@ -53,11 +53,19 @@ function toRecurringDto(row: RecurringWithAccount): RecurringManagedV1Dto {
 }
 
 export async function createRecurringManagedV1(input: CreateRecurringV1Input, householdId: string): Promise<RecurringManagedV1Dto> {
+  return prisma.$transaction((tx) => createRecurringManagedV1WithTx(tx, input, householdId));
+}
+
+export async function createRecurringManagedV1WithTx(
+  tx: Prisma.TransactionClient,
+  input: CreateRecurringV1Input,
+  householdId: string,
+): Promise<RecurringManagedV1Dto> {
   let categoryCode = input.categoryCode;
   if (isCustomCategoryName(input.categoryCode)) {
     const id = toCustomCategoryId(input.categoryCode);
     if (!id) throw new BadRequestError('Custom category code is invalid');
-    const category = await prisma.category.findFirst({ where: { id, householdId } });
+    const category = await tx.category.findFirst({ where: { id, householdId } });
     if (!category) throw new NotFoundError('Category');
     categoryCode = toCustomCategoryName(category.id);
   } else if (![...getCategoriesByType(CategoryType.INCOME), ...getCategoriesByType(CategoryType.EXPENSE)]
@@ -65,37 +73,35 @@ export async function createRecurringManagedV1(input: CreateRecurringV1Input, ho
     throw new BadRequestError('Category code is not supported for recurring transactions');
   }
 
-  const row = await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${input.accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
-    const account = await tx.account.findFirst({
-      where: { id: input.accountId, householdId, isActive: true },
-      select: { id: true, currency: true },
-    });
-    if (!account) throw new NotFoundError('Account');
-    const accountCurrency = currency(account.currency);
-    if (accountCurrency !== input.amount.currency) throw new BadRequestError('Recurring currency must match account currency');
+  await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${input.accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+  const account = await tx.account.findFirst({
+    where: { id: input.accountId, householdId, isActive: true },
+    select: { id: true, currency: true },
+  });
+  if (!account) throw new NotFoundError('Account');
+  const accountCurrency = currency(account.currency);
+  if (accountCurrency !== input.amount.currency) throw new BadRequestError('Recurring currency must match account currency');
 
-    return tx.recurringTransaction.create({
-      data: {
-        householdId,
-        accountId: account.id,
-        categoryName: categoryCode,
-        amount: minorUnitsToDecimal(input.amount),
-        description: input.description,
-        frequency: input.frequency,
-        kind: input.kind,
-        recurrenceMode: input.recurrenceMode ?? (input.endDate ? 'LIMITED' : 'ALWAYS'),
-        occurrencesLimit: input.recurrenceMode === 'ONCE' ? 1 : input.occurrencesLimit,
-        anchorDay: new Date(`${input.startDate}T00:00:00.000Z`).getUTCDate(),
-        effectiveFromDate: new Date(`${input.startDate}T00:00:00.000Z`),
-        occurrencesCountOffset: 0,
-        startDate: new Date(`${input.startDate}T00:00:00.000Z`),
-        endDate: input.endDate ? new Date(`${input.endDate}T00:00:00.000Z`) : null,
-        nextRunAt: new Date(`${(input.nextRunAt ?? input.startDate)}T00:00:00.000Z`),
-        timeZone: input.timeZone,
-      },
-      include: { account: { select: { currency: true } } },
-    });
+  const row = await tx.recurringTransaction.create({
+    data: {
+      householdId,
+      accountId: account.id,
+      categoryName: categoryCode,
+      amount: minorUnitsToDecimal(input.amount),
+      description: input.description,
+      frequency: input.frequency,
+      kind: input.kind,
+      recurrenceMode: input.recurrenceMode ?? (input.endDate ? 'LIMITED' : 'ALWAYS'),
+      occurrencesLimit: input.recurrenceMode === 'ONCE' ? 1 : input.occurrencesLimit,
+      anchorDay: new Date(`${input.startDate}T00:00:00.000Z`).getUTCDate(),
+      effectiveFromDate: new Date(`${input.startDate}T00:00:00.000Z`),
+      occurrencesCountOffset: 0,
+      startDate: new Date(`${input.startDate}T00:00:00.000Z`),
+      endDate: input.endDate ? new Date(`${input.endDate}T00:00:00.000Z`) : null,
+      nextRunAt: new Date(`${(input.nextRunAt ?? input.startDate)}T00:00:00.000Z`),
+      timeZone: input.timeZone,
+    },
+    include: { account: { select: { currency: true } } },
   });
 
   return toRecurringDto(row);

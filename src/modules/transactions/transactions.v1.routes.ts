@@ -6,6 +6,54 @@ import { createTransactionV1Schema, listTransactionsV1QuerySchema, transactionV1
 import { createTransactionV1, listTransactionsV1, softDeleteTransactionV1, updateTransactionV1 } from './transactions.v1.service.js';
 import { createTransferV1 } from './transfers.v1.service.js';
 import { createTransferV1Schema } from './transfers.v1.schema.js';
+import { createTransactionPlanV1 } from './transaction-plans.v1.service.js';
+import { createTransactionPlanV1Schema } from './transaction-plans.v1.schema.js';
+
+const transactionPlanMoneySchema = {
+  type: 'object',
+  required: ['minorUnits', 'currency'],
+  properties: {
+    minorUnits: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    currency: { type: 'string', enum: ['BRL', 'USD'] },
+  },
+  additionalProperties: false,
+};
+
+const transactionPlanTransactionProperties = {
+  id: { type: 'string', format: 'uuid' },
+  kind: { type: 'string', enum: ['expense', 'income'] },
+  amount: transactionPlanMoneySchema,
+  categoryCode: { type: 'string' },
+  accountId: { type: 'string', format: 'uuid' },
+  invoiceId: { type: ['string', 'null'], format: 'uuid' },
+  occurredAt: { type: 'string', format: 'date-time' },
+  timeZone: { type: 'string', maxLength: 64 },
+  note: { type: ['string', 'null'], maxLength: 1000 },
+  paid: { type: 'boolean' },
+  createdAt: { type: 'string', format: 'date-time' },
+  updatedAt: { type: 'string', format: 'date-time' },
+  deletedAt: { type: ['string', 'null'], format: 'date-time' },
+  version: { type: 'integer', minimum: 1 },
+  clientMutationId: { type: 'string', format: 'uuid' },
+};
+
+const transactionPlanTransactionRequired = Object.keys(transactionPlanTransactionProperties);
+
+const recurringPlanDtoSchema = {
+  type: 'object',
+  required: ['id', 'accountId', 'categoryCode', 'amount', 'description', 'frequency', 'startDate', 'endDate', 'nextRunAt', 'lastRunDate', 'timeZone', 'isActive', 'kind', 'recurrenceMode', 'occurrencesLimit', 'anchorDay'],
+  properties: {
+    id: { type: 'string', format: 'uuid' }, accountId: { type: 'string', format: 'uuid' }, categoryCode: { type: 'string' },
+    amount: transactionPlanMoneySchema, description: { type: ['string', 'null'], maxLength: 255 },
+    frequency: { type: 'string', enum: ['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY', 'YEARLY'] },
+    startDate: { type: 'string', format: 'date' }, endDate: { type: ['string', 'null'], format: 'date' },
+    nextRunAt: { type: 'string', format: 'date' }, lastRunDate: { type: ['string', 'null'], format: 'date' },
+    timeZone: { type: 'string', maxLength: 64 }, isActive: { type: 'boolean' }, kind: { type: 'string', enum: ['FIXED', 'VARIABLE'] },
+    recurrenceMode: { type: 'string', enum: ['ONCE', 'LIMITED', 'ALWAYS'] }, occurrencesLimit: { type: ['integer', 'null'], minimum: 1, maximum: 1200 },
+    anchorDay: { type: 'integer', minimum: 1, maximum: 31 },
+  },
+  additionalProperties: false,
+};
 
 export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
   app.addHook('preHandler', authMiddleware());
@@ -97,6 +145,83 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
     const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
     const transaction = await createTransactionV1(input, householdId, user.id);
     return reply.code(201).send(transaction);
+  });
+
+  app.post('/plans', {
+    schema: {
+      description: 'Create a monthly credit-card installment plan or a monthly continuous recurring expense; the first occurrence is created atomically',
+      tags: ['Transactions'],
+      security: [{ bearerAuth: [] }],
+      body: {
+        type: 'object',
+        required: ['clientMutationId', 'kind', 'totalAmount', 'categoryCode', 'accountId', 'occurredAt', 'timeZone', 'plan'],
+        properties: {
+          householdId: { type: 'string', format: 'uuid' },
+          clientMutationId: { type: 'string', format: 'uuid' },
+          kind: { type: 'string', const: 'expense' },
+          totalAmount: transactionPlanMoneySchema,
+          categoryCode: { type: 'string' },
+          accountId: { type: 'string', format: 'uuid' },
+          occurredAt: { type: 'string', format: 'date-time' },
+          timeZone: { type: 'string', minLength: 1, maxLength: 64 },
+          note: { type: 'string', maxLength: 255 },
+          paid: { type: 'boolean', default: true },
+          plan: {
+            type: 'object',
+            required: ['type'],
+            properties: {
+              type: { type: 'string', enum: ['INSTALLMENTS', 'RECURRING_MONTHLY'] },
+              count: { type: 'integer', minimum: 2, maximum: 6 },
+            },
+            additionalProperties: false,
+          },
+        },
+        additionalProperties: false,
+      },
+      response: {
+        201: {
+          oneOf: [
+            {
+              type: 'object', additionalProperties: false,
+              required: ['type', 'installmentId', 'totalAmount', 'installmentCount', 'items'],
+              properties: {
+                type: { type: 'string', const: 'INSTALLMENTS' }, installmentId: { type: 'string', format: 'uuid' },
+                totalAmount: transactionPlanMoneySchema, installmentCount: { type: 'integer', minimum: 2, maximum: 6 },
+                items: {
+                  type: 'array', minItems: 2, maxItems: 6,
+                  items: {
+                    type: 'object', additionalProperties: false,
+                    required: [...transactionPlanTransactionRequired, 'installmentId', 'installmentNumber', 'totalInstallments'],
+                    properties: {
+                      ...transactionPlanTransactionProperties,
+                      installmentId: { type: 'string', format: 'uuid' },
+                      installmentNumber: { type: 'integer', minimum: 1, maximum: 6 },
+                      totalInstallments: { type: 'integer', minimum: 2, maximum: 6 },
+                    },
+                  },
+                },
+              },
+            },
+            {
+              type: 'object', additionalProperties: false, required: ['type', 'recurringTransaction', 'firstOccurrence'],
+              properties: {
+                type: { type: 'string', const: 'RECURRING_MONTHLY' },
+                recurringTransaction: recurringPlanDtoSchema,
+                firstOccurrence: { type: 'object', additionalProperties: false, required: transactionPlanTransactionRequired, properties: transactionPlanTransactionProperties },
+              },
+            },
+          ],
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const input = createTransactionPlanV1Schema.parse(request.body);
+    const householdId = input.householdId ?? await ensurePersonalHousehold(request);
+    await requireEditor(request, householdId);
+    const authUser = getAuthUser(request);
+    const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
+    const result = await createTransactionPlanV1(input, householdId, user.id);
+    return reply.code(201).send(result);
   });
 
   app.post('/transfers', {

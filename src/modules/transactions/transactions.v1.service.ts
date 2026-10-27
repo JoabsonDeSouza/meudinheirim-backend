@@ -154,11 +154,6 @@ export async function createTransactionV1(
   userId: string,
   recurringOccurrence?: { recurringTransactionId: string; occurrenceDate: Date },
 ): Promise<TransactionV1Dto> {
-  const type = kindToPrismaType(input.kind);
-  const money = moneyDtoSchema.parse(input.amount);
-  const amount = minorUnitsToDecimal(money);
-  const occurredAt = new Date(input.occurredAt);
-
   const identity = {
     userId,
     clientMutationId: input.clientMutationId,
@@ -167,85 +162,104 @@ export async function createTransactionV1(
   return prisma.$transaction(async (tx) => {
     const replay = await findMutationReplay(tx, identity, transactionV1DtoSchema);
     if (replay !== null) return replay;
-    if (recurringOccurrence) {
-      const occurrenceDate = civilDate(input.occurredAt);
-      if (occurrenceDate.getTime() !== civilDate(recurringOccurrence.occurrenceDate.toISOString()).getTime()) {
-        throw new BadRequestError('Transaction date must match its recurring occurrence date');
-      }
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`recurring-occurrence:${recurringOccurrence.recurringTransactionId}:${occurrenceDate}`}))`;
-      const existing = await tx.recurringOccurrence.findUnique({
-        where: { recurringTransactionId_occurrenceDate: { recurringTransactionId: recurringOccurrence.recurringTransactionId, occurrenceDate: recurringOccurrence.occurrenceDate } },
-        include: { transaction: { include: { account: { select: { currency: true } } } } },
-      });
-      if (existing?.transaction.account) {
-        const existingDto = toDto({ ...existing.transaction, currency: existing.transaction.account.currency });
-        await saveMutationReceipt(tx, identity, 'transaction', existing.transaction.id, existingDto);
-        return existingDto;
-      }
-      const recurring = await tx.recurringTransaction.findFirst({
-        where: { id: recurringOccurrence.recurringTransactionId, householdId },
-        include: { account: { select: { currency: true } } },
-      });
-      if (!recurring) throw new NotFoundError('Recurring transaction');
-      if (recurring.account.currency !== money.currency) {
-        throw new BadRequestError('Occurrence account currency must match the recurring schedule');
-      }
-    }
-    const account = await requireAccount(tx, input.accountId, householdId, money.currency);
-    const categoryCode = await validateCategory(tx, input.categoryCode, householdId, type);
-    const invoiceId = account.type === AccountType.CREDIT
-      ? await getOrCreateInvoiceForTransaction(tx, {
-          householdId,
-          cardAccountId: account.id,
-          currency: money.currency,
-          closingDay: account.closingDay,
-          dueDay: account.dueDay,
-          occurredAt,
-          timeZone: input.timeZone,
-          amount,
-          transactionType: input.kind === 'income' ? 'INCOME' : 'EXPENSE',
-        })
-      : null;
-    const transaction = await tx.transaction.create({
-      data: {
-        householdId,
-        type,
-        accountId: account.id,
-        categoryName: categoryCode,
-        amount,
-        date: civilDate(input.occurredAt),
-        occurredAt,
-        timeZone: input.timeZone,
-        invoiceId,
-        notes: input.note,
-        paid: input.paid,
-        clientMutationId: input.clientMutationId,
-        ...(recurringOccurrence ? { recurringTransactionId: recurringOccurrence.recurringTransactionId } : {}),
-      },
-    });
-    if (recurringOccurrence) {
-      await tx.recurringOccurrence.create({
-        data: {
-          recurringTransactionId: recurringOccurrence.recurringTransactionId,
-          occurrenceDate: recurringOccurrence.occurrenceDate,
-          transactionId: transaction.id,
-        },
-      });
-    }
-    if (input.paid) {
-      await applyBalanceChange(tx, account.id, balanceChange(amount, input.kind, account.type));
-    }
-    const dto = toDto({ ...transaction, currency: money.currency });
-    await saveMutationReceipt(tx, identity, 'transaction', transaction.id, dto);
-    await appendSyncChange(tx, {
-      householdId,
-      entityType: 'transaction',
-      entityId: transaction.id,
-      version: transaction.version,
-      payload: dto,
-    });
+    const dto = await createTransactionV1WithTx(tx, input, householdId, recurringOccurrence);
+    await saveMutationReceipt(tx, identity, 'transaction', dto.id, dto);
     return dto;
   });
+}
+
+export async function createTransactionV1WithTx(
+  tx: Prisma.TransactionClient,
+  input: CreateTransactionV1Input,
+  householdId: string,
+  recurringOccurrence?: { recurringTransactionId: string; occurrenceDate: Date },
+  installment?: { installmentId: string; installmentNumber: number; totalInstallments: number },
+): Promise<TransactionV1Dto> {
+  const type = kindToPrismaType(input.kind);
+  const money = moneyDtoSchema.parse(input.amount);
+  const amount = minorUnitsToDecimal(money);
+  const occurredAt = new Date(input.occurredAt);
+
+  if (recurringOccurrence) {
+    const occurrenceDate = civilDate(input.occurredAt);
+    if (occurrenceDate.getTime() !== civilDate(recurringOccurrence.occurrenceDate.toISOString()).getTime()) {
+      throw new BadRequestError('Transaction date must match its recurring occurrence date');
+    }
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`recurring-occurrence:${recurringOccurrence.recurringTransactionId}:${occurrenceDate}`}))`;
+    const existing = await tx.recurringOccurrence.findUnique({
+      where: { recurringTransactionId_occurrenceDate: { recurringTransactionId: recurringOccurrence.recurringTransactionId, occurrenceDate: recurringOccurrence.occurrenceDate } },
+      include: { transaction: { include: { account: { select: { currency: true } } } } },
+    });
+    if (existing?.transaction.account) {
+      return toDto({ ...existing.transaction, currency: existing.transaction.account.currency });
+    }
+    const recurring = await tx.recurringTransaction.findFirst({
+      where: { id: recurringOccurrence.recurringTransactionId, householdId },
+      include: { account: { select: { currency: true } } },
+    });
+    if (!recurring) throw new NotFoundError('Recurring transaction');
+    if (recurring.account.currency !== money.currency) {
+      throw new BadRequestError('Occurrence account currency must match the recurring schedule');
+    }
+  }
+  const account = await requireAccount(tx, input.accountId, householdId, money.currency);
+  const categoryCode = await validateCategory(tx, input.categoryCode, householdId, type);
+  const invoiceId = account.type === AccountType.CREDIT
+    ? await getOrCreateInvoiceForTransaction(tx, {
+        householdId,
+        cardAccountId: account.id,
+        currency: money.currency,
+        closingDay: account.closingDay,
+        dueDay: account.dueDay,
+        occurredAt,
+        timeZone: input.timeZone,
+        amount,
+        transactionType: input.kind === 'income' ? 'INCOME' : 'EXPENSE',
+      })
+    : null;
+  const transaction = await tx.transaction.create({
+    data: {
+      householdId,
+      type,
+      accountId: account.id,
+      categoryName: categoryCode,
+      amount,
+      date: civilDate(input.occurredAt),
+      occurredAt,
+      timeZone: input.timeZone,
+      invoiceId,
+      notes: input.note,
+      paid: input.paid,
+      clientMutationId: input.clientMutationId,
+      ...(recurringOccurrence ? { recurringTransactionId: recurringOccurrence.recurringTransactionId } : {}),
+      ...(installment ? {
+        installmentId: installment.installmentId,
+        installmentNumber: installment.installmentNumber,
+        totalInstallments: installment.totalInstallments,
+      } : {}),
+    },
+  });
+  if (recurringOccurrence) {
+    await tx.recurringOccurrence.create({
+      data: {
+        recurringTransactionId: recurringOccurrence.recurringTransactionId,
+        occurrenceDate: recurringOccurrence.occurrenceDate,
+        transactionId: transaction.id,
+      },
+    });
+  }
+  if (input.paid) {
+    await applyBalanceChange(tx, account.id, balanceChange(amount, input.kind, account.type));
+  }
+  const dto = toDto({ ...transaction, currency: money.currency });
+  await appendSyncChange(tx, {
+    householdId,
+    entityType: 'transaction',
+    entityId: transaction.id,
+    version: transaction.version,
+    payload: dto,
+  });
+  return dto;
 }
 
 export async function listTransactionsV1(query: ListTransactionsV1Query, householdId: string): Promise<TransactionV1Page> {

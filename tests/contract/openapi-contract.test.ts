@@ -45,6 +45,7 @@ describe('versioned OpenAPI contract', () => {
     expect(document.paths['/v1/accounts/']?.post).toBeDefined();
     expect(document.paths['/v1/transactions/']?.get).toBeDefined();
     expect(document.paths['/v1/transactions/']?.post).toBeDefined();
+    expect(document.paths['/v1/transactions/plans']?.post).toBeDefined();
     expect(document.paths['/v1/transactions/transfers']?.post).toBeDefined();
     expect(document.paths['/v1/sync/changes']?.get).toBeDefined();
     expect(document.paths['/v1/credit-cards/invoices']?.get).toBeDefined();
