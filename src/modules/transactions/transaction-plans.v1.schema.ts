@@ -14,7 +14,7 @@ const timeZoneSchema = z.string().min(1).max(64).refine((value) => {
 }, 'timeZone must be a valid IANA time zone');
 
 export const transactionPlanV1InputSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('INSTALLMENTS'), count: z.number().int().min(2).max(6) }).strict(),
+  z.object({ type: z.literal('INSTALLMENTS'), count: z.number().int().min(2).max(24) }).strict(),
   z.object({ type: z.literal('RECURRING_MONTHLY') }).strict(),
 ]);
 
@@ -51,8 +51,8 @@ export type CreateTransactionPlanV1Input = z.infer<typeof createTransactionPlanV
 
 const plannedTransactionDtoSchema = transactionV1DtoSchema.extend({
   installmentId: z.string().uuid(),
-  installmentNumber: z.number().int().min(1).max(6),
-  totalInstallments: z.number().int().min(2).max(6),
+  installmentNumber: z.number().int().min(1).max(24),
+  totalInstallments: z.number().int().min(2).max(24),
 }).strict();
 
 export const transactionPlanV1ResponseSchema = z.discriminatedUnion('type', [
@@ -60,8 +60,8 @@ export const transactionPlanV1ResponseSchema = z.discriminatedUnion('type', [
     type: z.literal('INSTALLMENTS'),
     installmentId: z.string().uuid(),
     totalAmount: moneyDtoSchema,
-    installmentCount: z.number().int().min(2).max(6),
-    items: z.array(plannedTransactionDtoSchema).min(2).max(6),
+    installmentCount: z.number().int().min(2).max(24),
+    items: z.array(plannedTransactionDtoSchema).min(2).max(24),
   }).strict(),
   z.object({
     type: z.literal('RECURRING_MONTHLY'),

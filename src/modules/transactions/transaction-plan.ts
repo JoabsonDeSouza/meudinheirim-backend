@@ -58,8 +58,8 @@ export function splitTotalIntoInstallments(totalMinorUnits: number, installmentC
   if (!Number.isSafeInteger(totalMinorUnits) || totalMinorUnits <= 0) {
     throw new RangeError('Total must be a positive safe integer in minor units');
   }
-  if (!Number.isInteger(installmentCount) || installmentCount < 2 || installmentCount > 6) {
-    throw new RangeError('Installment count must be between 2 and 6');
+  if (!Number.isInteger(installmentCount) || installmentCount < 2 || installmentCount > 24) {
+    throw new RangeError('Installment count must be between 2 and 24');
   }
   if (totalMinorUnits < installmentCount) {
     throw new RangeError('Total must cover at least one minor unit per installment');
@@ -72,8 +72,8 @@ export function splitTotalIntoInstallments(totalMinorUnits: number, installmentC
 
 /** Returns the purchase date followed by monthly dates using the original day anchor. */
 export function calculateMonthlyInstallmentDates(startDate: Date, installmentCount: number): Date[] {
-  if (!Number.isInteger(installmentCount) || installmentCount < 2 || installmentCount > 6) {
-    throw new RangeError('Installment count must be between 2 and 6');
+  if (!Number.isInteger(installmentCount) || installmentCount < 2 || installmentCount > 24) {
+    throw new RangeError('Installment count must be between 2 and 24');
   }
   if (!Number.isFinite(startDate.getTime())) throw new RangeError('Start date is invalid');
 

@@ -2,7 +2,7 @@
 
 ## Goal
 
-Extend the versioned transaction API for a purchase entered as a total with 2–6 monthly card installments, and for a monthly continuous recurring transaction whose first occurrence is the transaction being created. Preserve the existing single-transaction API behavior and make related writes atomic/idempotent.
+Extend the versioned transaction API for a purchase entered as a total with 2–24 monthly card installments, and for a monthly continuous recurring transaction whose first occurrence is the transaction being created. Preserve the existing single-transaction API behavior and make related writes atomic/idempotent.
 
 ## Existing contract and data rules
 
@@ -15,7 +15,7 @@ Extend the versioned transaction API for a purchase entered as a total with 2–
 ## Proposed scope
 
 - Additive V1 contract for a planned transaction with mutually exclusive installment and recurring options; legacy single transaction requests stay unchanged.
-- Installment flow is expense-only, credit-card-only, accepts the purchase total, and emits 2–6 monthly transaction rows that sum exactly to the supplied total.
+- Installment flow is expense-only, credit-card-only, accepts the purchase total, and emits 2–24 monthly transaction rows that sum exactly to the supplied total.
 - Recurring flow is monthly/continuous and supports expense or income categories; the entered transaction is occurrence one, the recurring rule starts with that occurrence, and the next run is the next monthly anchor date. Persist the occurrence link/marker atomically so the scheduler cannot create a duplicate. Installments remain expense-only.
 - Installments and recurrence cannot be combined. Bank/debit accounts cannot have installment count. Card purchase does not settle an invoice.
 - Catalog work may expose existing stable codes only until the 11 category names/icons are supplied and verified.

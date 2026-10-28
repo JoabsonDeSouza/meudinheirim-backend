@@ -15,10 +15,10 @@ const validPlan = {
 };
 
 describe('transaction plan contract', () => {
-  it('accepts an expense total with 2–6 installments', () => {
+  it('accepts an expense total with 2–24 installments', () => {
     expect(createTransactionPlanV1Schema.safeParse(validPlan).success).toBe(true);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 2 } }).success).toBe(true);
-    expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 6 } }).success).toBe(true);
+    expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 24 } }).success).toBe(true);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, occurredAt: '2026-01-31T12:00:00+00:00' }).success).toBe(true);
   });
 
@@ -27,7 +27,7 @@ describe('transaction plan contract', () => {
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, kind: 'income', categoryCode: 'SALARY', plan: { type: 'RECURRING_MONTHLY' } }).success).toBe(true);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, kind: 'income', categoryCode: 'SALARY' }).success).toBe(false);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 1 } }).success).toBe(false);
-    expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 7 } }).success).toBe(false);
+    expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 25 } }).success).toBe(false);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, totalAmount: { minorUnits: 3, currency: 'BRL' } }).success).toBe(false);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, kind: 'income' }).success).toBe(false);
     expect(createTransactionPlanV1Schema.safeParse({ ...validPlan, plan: { type: 'INSTALLMENTS', count: 3, frequency: 'MONTHLY' } }).success).toBe(false);
@@ -42,6 +42,20 @@ describe('transaction installment math', () => {
     expect(amounts.reduce((sum, item) => sum + item, 0)).toBe(10001);
     expect(splitTotalIntoInstallments(101, 3)).toEqual([34, 34, 33]);
     expect(() => splitTotalIntoInstallments(3, 4)).toThrow(RangeError);
+    const maxCountAmounts = splitTotalIntoInstallments(2401, 24);
+    expect(maxCountAmounts).toHaveLength(24);
+    expect(maxCountAmounts).toEqual([101, ...Array<number>(23).fill(100)]);
+    expect(maxCountAmounts.reduce((sum, amount) => sum + amount, 0)).toBe(2401);
+  });
+
+  it('generates exactly 24 monthly installments with the original anchor', () => {
+    const dates = calculateMonthlyInstallmentDates(new Date('2026-01-31T00:00:00.000Z'), 24);
+    expect(dates).toHaveLength(24);
+    expect(dates[0].toISOString().slice(0, 10)).toBe('2026-01-31');
+    expect(dates[1].toISOString().slice(0, 10)).toBe('2026-02-28');
+    expect(dates[2].toISOString().slice(0, 10)).toBe('2026-03-31');
+    expect(dates[23].toISOString().slice(0, 10)).toBe('2027-12-31');
+    expect(() => calculateMonthlyInstallmentDates(new Date('2026-01-31T00:00:00.000Z'), 25)).toThrow(RangeError);
   });
 
   it('retains the original monthly day anchor after clamping short months', () => {

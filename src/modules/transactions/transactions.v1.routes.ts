@@ -171,7 +171,7 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
             required: ['type'],
             properties: {
               type: { type: 'string', enum: ['INSTALLMENTS', 'RECURRING_MONTHLY'] },
-              count: { type: 'integer', minimum: 2, maximum: 6 },
+              count: { type: 'integer', minimum: 2, maximum: 24 },
             },
             additionalProperties: false,
           },
@@ -186,17 +186,17 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
               required: ['type', 'installmentId', 'totalAmount', 'installmentCount', 'items'],
               properties: {
                 type: { type: 'string', const: 'INSTALLMENTS' }, installmentId: { type: 'string', format: 'uuid' },
-                totalAmount: transactionPlanMoneySchema, installmentCount: { type: 'integer', minimum: 2, maximum: 6 },
+                totalAmount: transactionPlanMoneySchema, installmentCount: { type: 'integer', minimum: 2, maximum: 24 },
                 items: {
-                  type: 'array', minItems: 2, maxItems: 6,
+                  type: 'array', minItems: 2, maxItems: 24,
                   items: {
                     type: 'object', additionalProperties: false,
                     required: [...transactionPlanTransactionRequired, 'installmentId', 'installmentNumber', 'totalInstallments'],
                     properties: {
                       ...transactionPlanTransactionProperties,
                       installmentId: { type: 'string', format: 'uuid' },
-                      installmentNumber: { type: 'integer', minimum: 1, maximum: 6 },
-                      totalInstallments: { type: 'integer', minimum: 2, maximum: 6 },
+                      installmentNumber: { type: 'integer', minimum: 1, maximum: 24 },
+                      totalInstallments: { type: 'integer', minimum: 2, maximum: 24 },
                     },
                   },
                 },

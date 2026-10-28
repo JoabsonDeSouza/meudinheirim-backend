@@ -96,6 +96,34 @@ function localDate(instant: string, timeZone: string): string {
 }
 
 describe('V1 transaction plans', () => {
+  it('creates all 24 monthly installments and conserves the total minor units', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/transactions/plans',
+      headers: { authorization: 'Bearer transaction-plan-owner' },
+      payload: payload('d3456789-abcd-4ef0-8123-456789abcdef', {
+        accountId: await createPlanTestCard('24-installment plan card'),
+        totalAmount: { minorUnits: 2401, currency: 'BRL' },
+        occurredAt: '2026-01-31T12:00:00.000Z',
+        plan: { type: 'INSTALLMENTS', count: 24 },
+      }),
+    });
+
+    expect(response.statusCode, JSON.stringify(response.json())).toBe(201);
+    const body = response.json() as {
+      installmentCount: number;
+      totalAmount: { minorUnits: number };
+      items: Array<{ amount: { minorUnits: number }; installmentNumber: number; totalInstallments: number }>;
+    };
+    expect(body.installmentCount).toBe(24);
+    expect(body.totalAmount.minorUnits).toBe(2401);
+    expect(body.items).toHaveLength(24);
+    expect(body.items.map((item) => item.installmentNumber)).toEqual(Array.from({ length: 24 }, (_, index) => index + 1));
+    expect(body.items.every((item) => item.totalInstallments === 24)).toBe(true);
+    expect(body.items.map((item) => item.amount.minorUnits)).toEqual([101, ...Array<number>(23).fill(100)]);
+    expect(body.items.reduce((sum, item) => sum + item.amount.minorUnits, 0)).toBe(2401);
+  });
+
   it('creates 4 monthly card installments, conserves total cents, and assigns each billing cycle', async () => {
     const response = await app.inject({
       method: 'POST',

@@ -14,12 +14,24 @@ interface OpenApiPath {
 
 interface OpenApiOperation {
   readonly requestBody?: {
-    readonly content?: Readonly<Record<string, { readonly schema?: { readonly required?: readonly string[]; readonly properties?: Readonly<Record<string, unknown>> } }>>;
+    readonly content?: Readonly<Record<string, { readonly schema?: OpenApiSchema }>>;
   };
+  readonly responses?: Readonly<Record<string, {
+    readonly content?: Readonly<Record<string, { readonly schema?: OpenApiSchema }>>;
+  }>>;
 }
 
-interface OpenApiField {
+interface OpenApiSchema {
   readonly enum?: readonly unknown[];
+  readonly const?: unknown;
+  readonly minimum?: number;
+  readonly maximum?: number;
+  readonly minItems?: number;
+  readonly maxItems?: number;
+  readonly required?: readonly string[];
+  readonly properties?: Readonly<Record<string, OpenApiSchema>>;
+  readonly items?: OpenApiSchema;
+  readonly oneOf?: readonly OpenApiSchema[];
 }
 
 interface OpenApiDocument {
@@ -74,8 +86,22 @@ describe('versioned OpenAPI contract', () => {
   it('documents income as a supported transaction-plan kind', () => {
     const document = app.swagger() as OpenApiDocument;
     const operation = document.paths['/v1/transactions/plans']?.post as OpenApiOperation | undefined;
-    const kind = operation?.requestBody?.content?.['application/json']?.schema?.properties?.kind as OpenApiField | undefined;
+    const kind = operation?.requestBody?.content?.['application/json']?.schema?.properties?.kind;
     expect(kind?.enum).toEqual(['expense', 'income']);
+  });
+
+  it('documents the 2–24 installment request and response bounds', () => {
+    const document = app.swagger() as OpenApiDocument;
+    const operation = document.paths['/v1/transactions/plans']?.post as OpenApiOperation | undefined;
+    const requestSchema = operation?.requestBody?.content?.['application/json']?.schema;
+    expect(requestSchema?.properties?.plan?.properties?.count?.maximum).toBe(24);
+
+    const responseSchema = operation?.responses?.['201']?.content?.['application/json']?.schema;
+    const installmentsSchema = responseSchema?.oneOf?.find((variant) => variant.properties?.type?.enum?.includes('INSTALLMENTS'));
+    expect(installmentsSchema?.properties?.installmentCount?.maximum).toBe(24);
+    expect(installmentsSchema?.properties?.items?.maxItems).toBe(24);
+    expect(installmentsSchema?.properties?.items?.items?.properties?.installmentNumber?.maximum).toBe(24);
+    expect(installmentsSchema?.properties?.items?.items?.properties?.totalInstallments?.maximum).toBe(24);
   });
 
   it('documents public auth configuration and health/readiness routes', () => {
