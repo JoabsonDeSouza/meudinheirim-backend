@@ -6,6 +6,7 @@ import { prisma } from '../../shared/db/prisma.js';
 import { civilDateStringAtInstant } from '../credit-cards/domain/billing-cycle.js';
 import { appendSyncChange, findMutationReplay, payloadHash, saveMutationReceipt } from '../../shared/sync/idempotency.js';
 import { createRecurringManagedV1WithTx } from '../recurring-transactions/recurring.v1.service.js';
+import { minorUnitsToDecimal } from '../../shared/money/index.js';
 import { calculateMonthlyInstallmentDates, instantAtCivilDateLike, splitTotalIntoInstallments } from './transaction-plan.js';
 import { createTransactionV1WithTx } from './transactions.v1.service.js';
 import type { CreateTransactionV1Input } from './transactions.v1.schema.js';
@@ -80,6 +81,7 @@ export async function createTransactionPlanV1(
           installmentId,
           installmentNumber: index + 1,
           totalInstallments: dates.length,
+          installmentTotalAmount: minorUnitsToDecimal(input.totalAmount),
         });
         items.push({ ...transaction, installmentId, installmentNumber: index + 1, totalInstallments: dates.length });
       }

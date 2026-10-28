@@ -127,6 +127,10 @@ function toDto(row: {
   deletedAt: Date | null;
   version: number;
   clientMutationId: string;
+  installmentId: string | null;
+  installmentNumber: number | null;
+  totalInstallments: number | null;
+  installmentTotalAmount: Prisma.Decimal | null;
 }): TransactionV1Dto {
   if (!row.categoryName || !row.accountId) throw new BadRequestError('Transaction is missing account or category identity');
   const currency = validateCurrency(row.currency);
@@ -146,6 +150,12 @@ function toDto(row: {
     deletedAt: row.deletedAt?.toISOString() ?? null,
     version: row.version,
     clientMutationId: row.clientMutationId,
+    installmentId: row.installmentId,
+    installmentNumber: row.installmentNumber,
+    totalInstallments: row.totalInstallments,
+    installmentTotalAmount: row.installmentTotalAmount
+      ? moneyDtoSchema.parse({ minorUnits: decimalToMinorUnits(row.installmentTotalAmount, currency), currency })
+      : null,
   };
 }
 
@@ -174,7 +184,7 @@ export async function createTransactionV1WithTx(
   input: CreateTransactionV1Input,
   householdId: string,
   recurringOccurrence?: { recurringTransactionId: string; occurrenceDate: Date; dateBasis?: 'UTC' | 'TIME_ZONE' },
-  installment?: { installmentId: string; installmentNumber: number; totalInstallments: number },
+  installment?: { installmentId: string; installmentNumber: number; totalInstallments: number; installmentTotalAmount: Prisma.Decimal },
 ): Promise<TransactionV1Dto> {
   const type = kindToPrismaType(input.kind);
   const money = moneyDtoSchema.parse(input.amount);
@@ -240,6 +250,7 @@ export async function createTransactionV1WithTx(
         installmentId: installment.installmentId,
         installmentNumber: installment.installmentNumber,
         totalInstallments: installment.totalInstallments,
+        installmentTotalAmount: installment.installmentTotalAmount,
       } : {}),
     },
   });
@@ -273,6 +284,7 @@ export async function listTransactionsV1(query: ListTransactionsV1Query, househo
     ...(query.accountId ? { accountId: query.accountId } : {}),
     ...(query.kind ? { type: kindToPrismaType(query.kind) } : {}),
     ...(query.categoryCode ? { categoryName: query.categoryCode } : {}),
+    ...(query.installmentId ? { installmentId: query.installmentId } : {}),
     ...((query.occurredAfter || query.occurredBefore) ? {
       occurredAt: {
         ...(query.occurredAfter ? { gte: new Date(query.occurredAfter) } : {}),

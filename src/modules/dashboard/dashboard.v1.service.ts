@@ -109,6 +109,12 @@ export async function getDashboardRecentTransactionsV1(
       fromAccountId: transaction.fromAccountId,
       toAccountId: transaction.toAccountId,
       invoiceId: transaction.invoiceId,
+      installmentId: transaction.installmentId,
+      installmentNumber: transaction.installmentNumber,
+      totalInstallments: transaction.totalInstallments,
+      installmentTotalAmount: transaction.installmentTotalAmount === null
+        ? null
+        : { minorUnits: decimalToMinorUnits(transaction.installmentTotalAmount, currency), currency },
       occurredAt: transaction.occurredAt.toISOString(),
       timeZone: transaction.timeZone,
       note: transaction.notes,

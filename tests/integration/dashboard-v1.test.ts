@@ -48,6 +48,10 @@ async function insertTransaction(input: {
   readonly type: 'INCOME' | 'EXPENSE' | 'TRANSFER';
   readonly fromAccountId?: string;
   readonly toAccountId?: string;
+  readonly installmentId?: string;
+  readonly installmentNumber?: number;
+  readonly totalInstallments?: number;
+  readonly installmentTotalAmount?: string;
 }): Promise<void> {
   const { prisma } = await import('../../src/shared/db/prisma.js');
   await prisma.transaction.create({
@@ -64,6 +68,12 @@ async function insertTransaction(input: {
       notes: null,
       paid: true,
       clientMutationId: input.clientMutationId,
+      ...(input.installmentId ? {
+        installmentId: input.installmentId,
+        installmentNumber: input.installmentNumber,
+        totalInstallments: input.totalInstallments,
+        installmentTotalAmount: new Prisma.Decimal(input.installmentTotalAmount!),
+      } : {}),
       ...(input.fromAccountId ? { fromAccountId: input.fromAccountId } : {}),
       ...(input.toAccountId ? { toAccountId: input.toAccountId } : {}),
     },
@@ -143,5 +153,42 @@ describe('V1 dashboard', () => {
       { currency: 'BRL', income: { minorUnits: 0, currency: 'BRL' }, expense: { minorUnits: 0, currency: 'BRL' }, balance: { minorUnits: 0, currency: 'BRL' } },
       { currency: 'USD', income: { minorUnits: 0, currency: 'USD' }, expense: { minorUnits: 0, currency: 'USD' }, balance: { minorUnits: 0, currency: 'USD' } },
     ]);
+  });
+
+  it('returns persisted installment grouping metadata and original total on recent activities', async () => {
+    const installmentId = uuidAt('40000000', 1);
+    const occurredAt = new Date('2026-10-15T10:00:00.000Z');
+    for (const [index, amount] of ['40.00', '40.00'].entries()) {
+      await insertTransaction({
+        id: uuidAt('50000000', index + 1),
+        accountId: brlAccountId,
+        amount,
+        categoryName: 'RESTAURANT',
+        clientMutationId: uuidAt('60000000', index + 1),
+        occurredAt,
+        type: 'EXPENSE',
+        installmentId,
+        installmentNumber: index + 1,
+        totalInstallments: 5,
+        installmentTotalAmount: '200.00',
+      });
+    }
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/dashboard/recent-transactions?householdId=${householdId}`,
+      headers: { authorization: 'Bearer dashboard-v1-user' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().items.slice(0, 2)).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        installmentId,
+        installmentNumber: 1,
+        totalInstallments: 5,
+        amount: { minorUnits: 4000, currency: 'BRL' },
+        installmentTotalAmount: { minorUnits: 20000, currency: 'BRL' },
+      }),
+      expect.objectContaining({ installmentId, installmentNumber: 2 }),
+    ]));
   });
 });

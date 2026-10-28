@@ -138,7 +138,7 @@ describe('V1 transaction plans', () => {
     const body = response.json() as {
       type: string;
       totalAmount: { minorUnits: number; currency: string };
-      items: Array<{ id: string; amount: { minorUnits: number }; occurredAt: string; installmentNumber: number; totalInstallments: number; installmentId: string; invoiceId: string | null; paid: boolean }>;
+      items: Array<{ id: string; amount: { minorUnits: number }; occurredAt: string; installmentNumber: number; totalInstallments: number; installmentId: string; installmentTotalAmount: { minorUnits: number }; invoiceId: string | null; paid: boolean }>;
     };
     expect(body.type).toBe('INSTALLMENTS');
     expect(body.totalAmount).toEqual({ minorUnits: 10001, currency: 'BRL' });
@@ -147,6 +147,7 @@ describe('V1 transaction plans', () => {
     expect(body.items.map((item) => localDate(item.occurredAt, 'Asia/Tokyo'))).toEqual(['2026-01-31', '2026-02-28', '2026-03-31', '2026-04-30']);
     expect(body.items.map((item) => item.installmentNumber)).toEqual([1, 2, 3, 4]);
     expect(body.items.every((item) => item.totalInstallments === 4 && item.installmentId === body.items[0].installmentId)).toBe(true);
+    expect(body.items.every((item) => item.installmentTotalAmount.minorUnits === 10001)).toBe(true);
     expect(body.items.every((item) => item.invoiceId !== null)).toBe(true);
     expect(new Set(body.items.map((item) => item.invoiceId)).size).toBe(4);
     expect(body.items.every((item) => !item.paid)).toBe(true);
@@ -156,6 +157,17 @@ describe('V1 transaction plans', () => {
     const persisted = await prisma.transaction.findMany({ where: { installmentId: body.items[0].installmentId }, orderBy: { installmentNumber: 'asc' } });
     expect(persisted).toHaveLength(4);
     expect(persisted.map((item) => [item.installmentNumber, item.totalInstallments])).toEqual([[1, 4], [2, 4], [3, 4], [4, 4]]);
+    expect(persisted.every((item) => item.installmentTotalAmount?.toFixed(2) === '100.01')).toBe(true);
+
+    const installmentDetails = await app.inject({
+      method: 'GET',
+      url: `/v1/transactions?householdId=${householdId}&installmentId=${body.items[0].installmentId}&limit=100`,
+      headers: { authorization: 'Bearer transaction-plan-owner' },
+    });
+    expect(installmentDetails.statusCode).toBe(200);
+    expect(installmentDetails.json().items.map((item: { amount: { minorUnits: number }; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; installmentTotalAmount: { minorUnits: number } | null }) => item.amount.minorUnits)).toEqual([2501, 2500, 2500, 2500]);
+    expect(installmentDetails.json().items.map((item: { installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; installmentTotalAmount: { minorUnits: number } | null }) => [item.installmentId, item.installmentNumber, item.totalInstallments, item.installmentTotalAmount?.minorUnits])).toEqual(body.items.map((item) => [item.installmentId, item.installmentNumber, item.totalInstallments, 10001]));
+    expect(installmentDetails.json().items).toHaveLength(4);
   });
 
   it('replays concurrent duplicate requests without creating duplicate transactions', async () => {

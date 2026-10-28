@@ -77,7 +77,7 @@ export async function dashboardV1Routes(app: FastifyInstance): Promise<void> {
               type: 'array', maxItems: 10,
               items: {
                 type: 'object',
-                required: ['id', 'kind', 'amount', 'categoryCode', 'accountId', 'fromAccountId', 'toAccountId', 'invoiceId', 'occurredAt', 'timeZone', 'note', 'paid', 'version', 'clientMutationId'],
+                required: ['id', 'kind', 'amount', 'categoryCode', 'accountId', 'fromAccountId', 'toAccountId', 'invoiceId', 'installmentId', 'installmentNumber', 'totalInstallments', 'installmentTotalAmount', 'occurredAt', 'timeZone', 'note', 'paid', 'version', 'clientMutationId'],
                 properties: {
                   id: { type: 'string', format: 'uuid' },
                   kind: { type: 'string', enum: ['income', 'expense', 'transfer'] },
@@ -87,6 +87,10 @@ export async function dashboardV1Routes(app: FastifyInstance): Promise<void> {
                   fromAccountId: { type: ['string', 'null'], format: 'uuid' },
                   toAccountId: { type: ['string', 'null'], format: 'uuid' },
                   invoiceId: { type: ['string', 'null'], format: 'uuid' },
+                  installmentId: { type: ['string', 'null'], format: 'uuid' },
+                  installmentNumber: { type: ['integer', 'null'], minimum: 1, maximum: 24 },
+                  totalInstallments: { type: ['integer', 'null'], minimum: 2, maximum: 24 },
+                  installmentTotalAmount: { anyOf: [moneySchema, { type: 'null' }] },
                   occurredAt: { type: 'string', format: 'date-time' },
                   timeZone: { type: 'string' },
                   note: { type: ['string', 'null'] },

@@ -57,6 +57,7 @@ export const listTransactionsV1QuerySchema = paginationSchema.extend({
   categoryCode: categoryNameSchema.optional(),
   occurredAfter: z.string().datetime().optional(),
   occurredBefore: z.string().datetime().optional(),
+  installmentId: z.string().uuid().optional(),
 }).strict();
 
 export type ListTransactionsV1Query = z.infer<typeof listTransactionsV1QuerySchema>;
@@ -87,6 +88,10 @@ export const transactionV1DtoSchema = z.object({
   deletedAt: z.string().datetime().nullable(),
   version: z.number().int().positive(),
   clientMutationId: z.string().uuid(),
+  installmentId: z.string().uuid().nullable(),
+  installmentNumber: z.number().int().positive().nullable(),
+  totalInstallments: z.number().int().positive().nullable(),
+  installmentTotalAmount: moneyDtoSchema.nullable(),
 }).strict();
 
 export type TransactionV1Dto = z.infer<typeof transactionV1DtoSchema>;

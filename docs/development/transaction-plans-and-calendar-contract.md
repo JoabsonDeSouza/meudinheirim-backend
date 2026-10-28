@@ -119,7 +119,9 @@ Creation is idempotent on `(authenticated user, clientMutationId)` and serialize
 
 ## Calendar reads
 
-- `GET /v1/transactions` is the authoritative persisted transaction list; supports `occurredAfter` and `occurredBefore` ISO date-time filters, `householdId`, account/category/kind filters, and cursor pagination. Requires Firebase auth and household membership.
+- `GET /v1/transactions` is the authoritative persisted transaction list; supports `occurredAfter` and `occurredBefore` ISO date-time filters, `householdId`, account/category/kind filters, and cursor pagination. Requires Firebase auth and household membership. Each item includes nullable `installmentId` (UUID), `installmentNumber` (1-based integer), `totalInstallments` (integer), and `installmentTotalAmount` (`MoneyDto` with integer `minorUnits` and `currency`). All four are `null` for transactions outside an installment plan.
+- `GET /v1/transactions` also accepts `installmentId` to retrieve all non-deleted charges for one exact persisted plan group, preserving each row's amount and `occurredAt`.
+- `GET /v1/dashboard/recent-transactions` continues returning individual recent ledger rows and adds nullable `installmentId`, `installmentNumber`, `totalInstallments`, and `installmentTotalAmount` fields. For new plans, the common ID and sequence are persisted plan metadata and the original total is stored on each installment; non-plan rows return nulls. The migration backfills existing plan totals by summing rows with the same persisted installment ID (historical total reflects stored installment amounts at migration time). Grouping is by exact ID, not inferred from dates, notes, values, or invoice cycles.
 - `GET /v1/recurring-transactions/occurrences` expands managed recurring schedules over a civil date range, including the transaction linked to the first occurrence. Requires Firebase auth and household membership.
 
 ## Persistence and verification

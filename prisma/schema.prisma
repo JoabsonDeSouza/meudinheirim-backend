@@ -297,6 +297,7 @@ model Transaction {
   installmentId          String?         @map("installment_id")
   installmentNumber      Int?            @map("installment_number")
   totalInstallments      Int?            @map("total_installments")
+  installmentTotalAmount Decimal?        @map("installment_total_amount") @db.Decimal(15, 2)
   attachmentUrl          String?         @map("attachment_url")
   // Split expense fields
   isSplit                Boolean         @default(false) @map("is_split") // Indica se a transação é dividida entre membros

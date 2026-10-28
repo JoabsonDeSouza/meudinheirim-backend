@@ -35,6 +35,10 @@ const transactionPlanTransactionProperties = {
   deletedAt: { type: ['string', 'null'], format: 'date-time' },
   version: { type: 'integer', minimum: 1 },
   clientMutationId: { type: 'string', format: 'uuid' },
+  installmentId: { type: ['string', 'null'], format: 'uuid' },
+  installmentNumber: { type: ['integer', 'null'], minimum: 1 },
+  totalInstallments: { type: ['integer', 'null'], minimum: 1 },
+  installmentTotalAmount: { anyOf: [transactionPlanMoneySchema, { type: 'null' }] },
 };
 
 const transactionPlanTransactionRequired = Object.keys(transactionPlanTransactionProperties);
@@ -72,6 +76,7 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
           categoryCode: { type: 'string' },
           occurredAfter: { type: 'string', format: 'date-time' },
           occurredBefore: { type: 'string', format: 'date-time' },
+          installmentId: { type: 'string', format: 'uuid' },
           cursor: { type: 'string', maxLength: 256 },
           limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
         },
@@ -80,7 +85,14 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
         200: {
           type: 'object',
           properties: {
-            items: { type: 'array', items: { type: 'object', additionalProperties: true } },
+            items: {
+              type: 'array',
+              items: {
+                type: 'object', additionalProperties: false,
+                required: [...Object.keys(transactionPlanTransactionProperties)],
+                properties: transactionPlanTransactionProperties,
+              },
+            },
             pagination: {
               type: 'object',
               properties: {
