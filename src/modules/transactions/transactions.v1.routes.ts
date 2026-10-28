@@ -203,7 +203,7 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
                   type: 'array', minItems: 2, maxItems: 24,
                   items: {
                     type: 'object', additionalProperties: false,
-                    required: [...transactionPlanTransactionRequired, 'installmentId', 'installmentNumber', 'totalInstallments'],
+                    required: [...new Set([...transactionPlanTransactionRequired, 'installmentId', 'installmentNumber', 'totalInstallments', 'installmentTotalAmount'])],
                     properties: {
                       ...transactionPlanTransactionProperties,
                       installmentId: { type: 'string', format: 'uuid' },
