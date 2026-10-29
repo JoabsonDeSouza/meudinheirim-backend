@@ -14,6 +14,8 @@ Recorded: 2026-10-13 · Feature: `meudinheirim-backend-adaptation` · Task: T10
 - `/v1/categories/system` returns `{ code, type }` only for system categories. It omits translated labels.
 - `/v1/categories/` combines stable system codes with UUID-backed custom category codes; user-authored custom names remain unchanged.
 - `/v1/categories/custom` creates custom records and returns `CUSTOM:<UUID>`.
+- `POST /v1/categories/:categoryId/archive` idempotently sets `archived_at` for a custom category and returns `{ success: true, data: { id, archivedAt } }`. It requires Firebase auth and household editor access; system categories cannot be addressed because the path requires a UUID. Default category listing omits archived custom categories. Existing transaction, budget, and recurring references are retained; new transaction creation and new/changed recurring assignments reject archived custom categories. Existing recurring rules continue generating occurrences with their archived `CUSTOM:<UUID>` reference; editors can change the rule to an active category. Historical transaction DTOs retain the stable code.
+- Archive returns `NOT_FOUND` when the custom category does not exist or is outside the caller's household, and `FORBIDDEN`/`INSUFFICIENT_ROLE` when the caller lacks editor permission. Repeated archive calls return the original `archivedAt` timestamp.
 - Runtime schemas reject unknown input fields.
 
 ## Migration decision

@@ -88,6 +88,27 @@ describe('authorization matrix (accounts/financial surfaces)', () => {
     expect(body.items.every((category) => !('label' in category) && !('name' in category))).toBe(true);
   });
 
+  it('requires editor membership to archive custom categories and rejects system codes', async () => {
+    const created = await app.inject({ method: 'POST', url: '/v1/categories/custom', headers: authHeaders('sec-owner'), payload: { householdId: ownerHouseholdId, name: 'Archive permission test', type: 'EXPENSE' } });
+    expect(created.statusCode).toBe(201);
+    const { id } = created.json() as { id: string };
+    const path = `/v1/categories/${id}/archive`;
+    const viewer = await app.inject({ method: 'POST', url: path, headers: authHeaders('sec-viewer') });
+    expect(viewer.statusCode).toBe(403);
+    const system = await app.inject({ method: 'POST', url: '/v1/categories/FOOD/archive', headers: authHeaders('sec-owner') });
+    expect(system.statusCode).toBe(400);
+    const owner = await app.inject({ method: 'POST', url: path, headers: authHeaders('sec-owner') });
+    expect(owner.statusCode).toBe(200);
+  });
+
+  it('returns not found when archiving a category outside the caller household', async () => {
+    const outsider = await app.inject({ method: 'POST', url: '/v1/categories/custom', headers: authHeaders('sec-outsider'), payload: { name: 'Outsider category', type: 'EXPENSE' } });
+    expect(outsider.statusCode).toBe(201);
+    const { id } = outsider.json() as { id: string };
+    const cross = await app.inject({ method: 'POST', url: `/v1/categories/${id}/archive`, headers: authHeaders('sec-owner') });
+    expect(cross.statusCode).toBe(404);
+  });
+
   it('owner can list household accounts and create an account', async () => {
     const list = await app.inject({
       method: 'GET',

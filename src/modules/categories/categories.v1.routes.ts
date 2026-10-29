@@ -1,12 +1,16 @@
 import type { FastifyInstance } from 'fastify';
-import { authMiddleware } from '../../shared/middleware/auth.middleware.js';
+import { authMiddleware, getAuthUser } from '../../shared/middleware/auth.middleware.js';
 import {
   ensurePersonalHousehold,
   requireEditor,
   requireHouseholdMember,
+  getUserByFirebaseUid,
+  getHouseholdMembership,
+  hasRoleLevel,
 } from '../../shared/middleware/authorization.middleware.js';
 import { toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
-import { listCategoriesQuerySchema, createCategorySchema, getSystemCategoryCodes } from './categories.schema.js';
+import { NotFoundError, InsufficientRoleError } from '../../shared/errors/index.js';
+import { listCategoriesQuerySchema, createCategorySchema, categoryIdParamSchema, getSystemCategoryCodes } from './categories.schema.js';
 import * as categoriesService from './categories.service.js';
 
 export async function categoryV1Routes(app: FastifyInstance): Promise<void> {
@@ -102,5 +106,48 @@ export async function categoryV1Routes(app: FastifyInstance): Promise<void> {
       color: category.color,
       isCustom: true,
     });
+  });
+
+  app.post<{ Params: { categoryId: string } }>('/:categoryId/archive', {
+    schema: {
+      description: 'Idempotently archive a household custom category; historical references are retained.',
+      tags: ['Categories'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object', required: ['categoryId'],
+        properties: { categoryId: { type: 'string', format: 'uuid' } },
+      },
+      response: {
+        200: {
+          type: 'object', required: ['success', 'data'],
+          properties: {
+            success: { type: 'boolean' },
+            data: {
+              type: 'object', required: ['id', 'archivedAt'],
+              properties: { id: { type: 'string', format: 'uuid' }, archivedAt: { type: 'string', format: 'date-time' } },
+              additionalProperties: false,
+            },
+          },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { categoryId } = categoryIdParamSchema.parse(request.params);
+    const category = await categoriesService.findCategoryById(categoryId);
+    if (!category) throw new NotFoundError('Category');
+
+    const authUser = getAuthUser(request);
+    const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
+    const membership = await getHouseholdMembership(user.id, category.householdId);
+    if (!membership) {
+      // Hide cross-household resource existence; contract says NOT_FOUND.
+      throw new NotFoundError('Category');
+    }
+    if (!hasRoleLevel(membership.role, 'EDITOR')) {
+      throw new InsufficientRoleError();
+    }
+
+    const archived = await categoriesService.archiveCategory(categoryId, category.householdId);
+    return reply.send({ success: true, data: archived });
   });
 }

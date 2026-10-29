@@ -260,6 +260,7 @@ model Category {
   color       String?      @db.VarChar(7) // Hex, e.g. #3B82F6
   createdAt   DateTime     @default(now()) @map("created_at")
   updatedAt   DateTime     @updatedAt @map("updated_at")
+  archivedAt  DateTime?    @map("archived_at") @db.Timestamptz(3)
 
   household Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 

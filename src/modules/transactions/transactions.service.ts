@@ -169,7 +169,7 @@ export async function createTransaction(input: CreateTransactionInput, userId?: 
     if (customId === null) {
       throw new BadRequestError('Custom category id is invalid');
     }
-    const cat = await prisma.category.findFirst({ where: { id: customId, householdId } });
+    const cat = await prisma.category.findFirst({ where: { id: customId, householdId, archivedAt: null } });
     if (!cat) throw new BadRequestError('Custom category not found or does not belong to this household');
     transactionType = cat.type as TransactionType.INCOME | TransactionType.EXPENSE;
   } else {

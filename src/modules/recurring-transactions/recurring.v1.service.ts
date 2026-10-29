@@ -65,7 +65,7 @@ export async function createRecurringManagedV1WithTx(
   if (isCustomCategoryName(input.categoryCode)) {
     const id = toCustomCategoryId(input.categoryCode);
     if (!id) throw new BadRequestError('Custom category code is invalid');
-    const category = await tx.category.findFirst({ where: { id, householdId } });
+    const category = await tx.category.findFirst({ where: { id, householdId, archivedAt: null } });
     if (!category) throw new NotFoundError('Category');
     categoryCode = toCustomCategoryName(category.id);
   } else if (![...getCategoriesByType(CategoryType.INCOME), ...getCategoriesByType(CategoryType.EXPENSE)]
@@ -184,7 +184,7 @@ export async function updateRecurringV1(
   if (input.categoryCode && isCustomCategoryName(input.categoryCode)) {
     const id = toCustomCategoryId(input.categoryCode);
     if (!id) throw new BadRequestError('Custom category code is invalid');
-    const category = await prisma.category.findFirst({ where: { id, householdId } });
+    const category = await prisma.category.findFirst({ where: { id, householdId, archivedAt: null } });
     if (!category) throw new NotFoundError('Category');
     categoryName = toCustomCategoryName(category.id);
   } else if (input.categoryCode && ![...getCategoriesByType(CategoryType.INCOME), ...getCategoriesByType(CategoryType.EXPENSE)]

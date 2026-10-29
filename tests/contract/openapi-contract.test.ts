@@ -140,4 +140,9 @@ describe('versioned OpenAPI contract', () => {
     const document = app.swagger() as OpenApiDocument;
     expect(document.paths['/v1/categories/system']?.get).toBeDefined();
   });
+
+  it('documents custom category archival', () => {
+    const document = app.swagger() as OpenApiDocument;
+    expect(document.paths['/v1/categories/{categoryId}/archive']?.post).toBeDefined();
+  });
 });

@@ -43,6 +43,49 @@ afterAll(async () => {
 });
 
 describe('recurring occurrence idempotency', () => {
+  it('continues existing schedules on archived categories, while requiring active categories for new assignments', async () => {
+    const today = new Date();
+    const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())).toISOString().slice(0, 10);
+    const isolatedAccount = await prisma.account.create({
+      data: { householdId, name: 'Archived category recurring test account', type: 'CHECKING', currency: 'BRL', balance: new Prisma.Decimal('100.00'), availableBalance: new Prisma.Decimal('100.00'), totalBalance: new Prisma.Decimal('100.00'), allocatedBalance: new Prisma.Decimal('0.00') },
+    });
+    const createdCategory = await app.inject({ method: 'POST', url: '/v1/categories/custom', headers: { authorization: 'Bearer recurring-user' }, payload: { name: 'Recurring archived', type: 'EXPENSE' } });
+    const category = createdCategory.json() as { id: string; code: string };
+    const ruleResponse = await app.inject({
+      method: 'POST', url: '/v1/recurring-transactions/managed', headers: { authorization: 'Bearer recurring-user' },
+      payload: { householdId, accountId: isolatedAccount.id, categoryCode: category.code, amount: { minorUnits: 500, currency: 'BRL' }, frequency: 'DAILY', kind: 'FIXED', recurrenceMode: 'ONCE', startDate: date, timeZone: 'America/Sao_Paulo', description: 'Existing rule' },
+    });
+    expect(ruleResponse.statusCode).toBe(201);
+    const ruleId = ruleResponse.json().id as string;
+    const editableResponse = await app.inject({
+      method: 'POST', url: '/v1/recurring-transactions/managed', headers: { authorization: 'Bearer recurring-user' },
+      payload: { householdId, accountId: isolatedAccount.id, categoryCode: category.code, amount: { minorUnits: 500, currency: 'BRL' }, frequency: 'DAILY', kind: 'FIXED', recurrenceMode: 'ALWAYS', startDate: date, timeZone: 'America/Sao_Paulo', description: 'Editable existing rule' },
+    });
+    expect(editableResponse.statusCode).toBe(201);
+    const archive = await app.inject({ method: 'POST', url: `/v1/categories/${category.id}/archive`, headers: { authorization: 'Bearer recurring-user' } });
+    expect(archive.statusCode).toBe(200);
+
+    const payment = await app.inject({
+      method: 'POST', url: `/v1/recurring-transactions/${ruleId}/occurrences/${date}/pay`, headers: { authorization: 'Bearer recurring-user' },
+      payload: { householdId, amount: { minorUnits: 500, currency: 'BRL' }, clientMutationId: '31a22bb3-cc44-4d55-8e66-123456789abc' },
+    });
+    expect(payment.statusCode).toBe(200);
+    const transaction = await prisma.transaction.findUniqueOrThrow({ where: { id: payment.json().transactionId as string } });
+    expect(transaction.categoryName).toBe(category.code);
+
+    const rejectedNewRule = await app.inject({
+      method: 'POST', url: '/v1/recurring-transactions/managed', headers: { authorization: 'Bearer recurring-user' },
+      payload: { householdId, accountId: isolatedAccount.id, categoryCode: category.code, amount: { minorUnits: 500, currency: 'BRL' }, frequency: 'DAILY', kind: 'FIXED', recurrenceMode: 'ONCE', startDate: date, timeZone: 'America/Sao_Paulo', description: 'New rule' },
+    });
+    expect(rejectedNewRule.statusCode).toBe(404);
+
+    const replacement = await app.inject({ method: 'POST', url: '/v1/categories/custom', headers: { authorization: 'Bearer recurring-user' }, payload: { name: 'Active replacement', type: 'EXPENSE' } });
+    const activeCategory = replacement.json() as { code: string };
+    const update = await app.inject({ method: 'PATCH', url: `/v1/recurring-transactions/${editableResponse.json().id}?householdId=${householdId}`, headers: { authorization: 'Bearer recurring-user' }, payload: { categoryCode: activeCategory.code } });
+    expect(update.statusCode).toBe(200);
+    expect(update.json().categoryCode).toBe(activeCategory.code);
+  });
+
   it('creates a V1 schedule using MoneyDto and explicit IANA timezone', async () => {
     const response = await app.inject({
       method: 'POST',
