@@ -69,12 +69,26 @@ export async function listCategories(query: ListCategoriesQuery): Promise<{ id: 
   const categories = await prisma.category.findMany({
     where: {
       householdId: householdId!,
+      archivedAt: null,
       ...(type && { type }),
     },
     orderBy: [{ type: 'asc' }, { name: 'asc' }],
   });
 
   return categories;
+}
+
+/** Archive a custom category while retaining its stable id for historical references. */
+export async function archiveCategory(categoryId: string, householdId: string): Promise<{ id: string; archivedAt: Date }> {
+  const category = await prisma.category.findFirst({ where: { id: categoryId, householdId } });
+  if (!category) throw new NotFoundError('Category');
+  await prisma.category.updateMany({
+    where: { id: categoryId, householdId, archivedAt: null },
+    data: { archivedAt: new Date() },
+  });
+  const archived = await prisma.category.findFirst({ where: { id: categoryId, householdId }, select: { id: true, archivedAt: true } });
+  if (!archived?.archivedAt) throw new NotFoundError('Category');
+  return { id: archived.id, archivedAt: archived.archivedAt };
 }
 
 /**

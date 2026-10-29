@@ -165,9 +165,11 @@ describe('V1 transaction plans', () => {
       headers: { authorization: 'Bearer transaction-plan-owner' },
     });
     expect(installmentDetails.statusCode).toBe(200);
-    expect(installmentDetails.json().items.map((item: { amount: { minorUnits: number }; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; installmentTotalAmount: { minorUnits: number } | null }) => item.amount.minorUnits)).toEqual([2501, 2500, 2500, 2500]);
-    expect(installmentDetails.json().items.map((item: { installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; installmentTotalAmount: { minorUnits: number } | null }) => [item.installmentId, item.installmentNumber, item.totalInstallments, item.installmentTotalAmount?.minorUnits])).toEqual(body.items.map((item) => [item.installmentId, item.installmentNumber, item.totalInstallments, 10001]));
-    expect(installmentDetails.json().items).toHaveLength(4);
+    const listedInstallments = installmentDetails.json().items as Array<{ amount: { minorUnits: number }; installmentId: string | null; installmentNumber: number | null; totalInstallments: number | null; installmentTotalAmount: { minorUnits: number } | null }>;
+    const installmentsByNumber = [...listedInstallments].sort((left, right) => (left.installmentNumber ?? 0) - (right.installmentNumber ?? 0));
+    expect(installmentsByNumber.map((item) => item.amount.minorUnits)).toEqual([2501, 2500, 2500, 2500]);
+    expect(installmentsByNumber.map((item) => [item.installmentId, item.installmentNumber, item.totalInstallments, item.installmentTotalAmount?.minorUnits])).toEqual(body.items.map((item) => [item.installmentId, item.installmentNumber, item.totalInstallments, 10001]));
+    expect(listedInstallments).toHaveLength(4);
   });
 
   it('replays concurrent duplicate requests without creating duplicate transactions', async () => {

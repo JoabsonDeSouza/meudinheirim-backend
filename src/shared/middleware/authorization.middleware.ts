@@ -28,7 +28,7 @@ const ROLE_HIERARCHY: Record<HouseholdRole, number> = {
 /**
  * Check if a role has at least the required level
  */
-function hasRoleLevel(userRole: HouseholdRole, requiredRole: HouseholdRole): boolean {
+export function hasRoleLevel(userRole: HouseholdRole, requiredRole: HouseholdRole): boolean {
   return ROLE_HIERARCHY[userRole] >= ROLE_HIERARCHY[requiredRole];
 }
 

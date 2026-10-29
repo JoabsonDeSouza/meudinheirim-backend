@@ -67,7 +67,7 @@ export async function createRecurringTransaction(
   // Validate custom category exists and belongs to household
   if (isCustomCategoryName(categoryName)) {
     const customId = toCustomCategoryId(categoryName)!;
-    const cat = await prisma.category.findFirst({ where: { id: customId, householdId } });
+    const cat = await prisma.category.findFirst({ where: { id: customId, householdId, archivedAt: null } });
     if (!cat) throw new BadRequestError('Custom category not found or does not belong to this household');
   }
 
@@ -239,7 +239,7 @@ export async function updateRecurringTransaction(
   // Validate custom category exists when updating categoryName
   if (input.categoryName && isCustomCategoryName(input.categoryName)) {
     const customId = toCustomCategoryId(input.categoryName)!;
-    const cat = await prisma.category.findFirst({ where: { id: customId, householdId } });
+    const cat = await prisma.category.findFirst({ where: { id: customId, householdId, archivedAt: null } });
     if (!cat) throw new BadRequestError('Custom category not found or does not belong to this household');
   }
 

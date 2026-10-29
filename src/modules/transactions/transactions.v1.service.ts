@@ -78,12 +78,13 @@ async function validateCategory(
   categoryCode: string,
   householdId: string,
   type: TransactionType,
+  allowArchived = false,
 ): Promise<string> {
   const categoryType = type === TransactionType.INCOME ? CategoryType.INCOME : CategoryType.EXPENSE;
   if (isCustomCategoryName(categoryCode)) {
     const id = toCustomCategoryId(categoryCode);
     if (id === null) throw new BadRequestError('Custom category code is invalid');
-    const category = await tx.category.findFirst({ where: { id, householdId } });
+    const category = await tx.category.findFirst({ where: { id, householdId, ...(allowArchived ? {} : { archivedAt: null }) } });
     if (!category || category.type !== categoryType) throw new NotFoundError('Category');
     return toCustomCategoryName(category.id);
   }
@@ -217,7 +218,7 @@ export async function createTransactionV1WithTx(
     }
   }
   const account = await requireAccount(tx, input.accountId, householdId, money.currency);
-  const categoryCode = await validateCategory(tx, input.categoryCode, householdId, type);
+  const categoryCode = await validateCategory(tx, input.categoryCode, householdId, type, recurringOccurrence !== undefined);
   const invoiceId = account.type === AccountType.CREDIT
     ? await getOrCreateInvoiceForTransaction(tx, {
         householdId,
