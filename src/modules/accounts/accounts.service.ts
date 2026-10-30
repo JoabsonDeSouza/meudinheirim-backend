@@ -523,7 +523,7 @@ export async function updateAccount(accountId: string, householdId: string, inpu
     ...(input.brand !== undefined && { brand: input.brand }),
     ...(input.cardNetwork !== undefined && { cardNetwork: input.cardNetwork }),
     ...(input.last4 !== undefined && { last4: input.last4 }),
-    ...(input.balance !== undefined && { balance: new Prisma.Decimal(input.balance) }), // Permitir atualização direta (usado para pagamento de fatura)
+    // balance is handled through the adjustment mechanism below to keep the ledger intact
     ...(input.isActive !== undefined && { isActive: input.isActive }),
     ...(input.isActive === true && { status: 'ACTIVE' as const }),
     ...(accountColor !== undefined && { color: accountColor }),
@@ -549,6 +549,37 @@ export async function updateAccount(accountId: string, householdId: string, inpu
     updateData.bestDayOffset = null;
     updateData.linkedAccount = { disconnect: true };
     updateData.totalLimit = null;
+  }
+
+  const hasBalanceUpdate = input.balance !== undefined;
+
+  if (hasBalanceUpdate) {
+    // Apply the balance change atomically with the other edits. This keeps the
+    // ledger invariant (total = available + allocated) and creates a traceable
+    // adjustment transaction for any non-zero difference.
+    const updatedAccount = await prisma.$transaction(async (tx) => {
+      const adjustmentResult = await applyBalanceAdjustment(
+        tx,
+        currentAccount,
+        householdId,
+        input.balance!,
+        'Account balance update',
+      );
+
+      const accountAfterAdjustment = adjustmentResult.account;
+      const accountAfterOtherUpdate =
+        Object.keys(updateData).length > 0
+          ? await tx.account.update({ where: { id: accountId }, data: updateData })
+          : accountAfterAdjustment;
+
+      return accountAfterOtherUpdate;
+    });
+
+    return {
+      ...updatedAccount,
+      balance: updatedAccount.balance.toNumber(),
+      creditLimit: updatedAccount.creditLimit ? updatedAccount.creditLimit.toNumber() : null,
+    };
   }
 
   const account = await prisma.account.update({
@@ -817,6 +848,68 @@ export async function transferBetweenAccounts(
   return result;
 }
 
+type AccountRow = Awaited<ReturnType<typeof prisma.account.findFirst>>;
+
+/**
+ * Core balance adjustment logic. Applies the adjustment inside the supplied
+ * transaction client so callers can compose it atomically with other writes.
+ * Keeps the ledger intact: totalBalance = availableBalance + allocatedBalance,
+ * allocatedBalance is never touched, and a traceable adjustment transaction is
+ * created for non-zero differences.
+ */
+async function applyBalanceAdjustment(
+  tx: Prisma.TransactionClient,
+  account: NonNullable<AccountRow>,
+  householdId: string,
+  newBalance: number,
+  reason?: string,
+): Promise<{ account: NonNullable<AccountRow>; adjustment: Awaited<ReturnType<typeof tx.transaction.create>> | null }> {
+  // Use totalBalance as the source of truth; fall back to legacy balance for robustness.
+  const currentTotalBalance = account.totalBalance?.toNumber() || account.balance.toNumber();
+  const difference = new Prisma.Decimal(newBalance).minus(new Prisma.Decimal(currentTotalBalance));
+
+  if (difference.isZero()) {
+    return { account, adjustment: null };
+  }
+
+  // Guard: an adjustment down must not make availableBalance negative.
+  // availableBalance = totalBalance - allocatedBalance, so new total must cover allocations.
+  const allocatedBalance = account.allocatedBalance.toNumber();
+  if (newBalance < allocatedBalance) {
+    throw new BadRequestError(
+      `Adjustment would result in negative available balance; minimum allowed is ${allocatedBalance}`,
+    );
+  }
+
+  const categoryName = difference.isPositive() ? CategoryName.OTHER_INCOME : CategoryName.OTHER_EXPENSES;
+  const differenceAmount = difference.toNumber();
+
+  const updatedAccount = await tx.account.update({
+    where: { id: account.id },
+    data: {
+      balance: newBalance, // Legacy field
+      totalBalance: newBalance,
+      availableBalance: { increment: differenceAmount },
+      // allocatedBalance remains unchanged
+    },
+  });
+
+  const adjustmentTransaction = await tx.transaction.create({
+    data: {
+      householdId,
+      accountId: account.id,
+      categoryName,
+      amount: differenceAmount,
+      description: reason || 'Balance adjustment',
+      date: new Date(),
+      notes: `Previous balance: ${account.balance}, New balance: ${newBalance}`,
+      paid: true,
+    },
+  });
+
+  return { account: updatedAccount, adjustment: adjustmentTransaction };
+}
+
 /**
  * Manually adjust account balance
  */
@@ -833,52 +926,9 @@ export async function adjustBalance(
     throw new NotFoundError('Account');
   }
 
-  // Calculate difference based on totalBalance (not legacy balance)
-  const currentTotalBalance = account.totalBalance?.toNumber() || account.balance.toNumber();
-  const difference = new Prisma.Decimal(input.newBalance).minus(new Prisma.Decimal(currentTotalBalance));
-
-  if (difference.isZero()) {
-    return { account, adjustment: null };
-  }
-
-  // Determinar categoria baseado no tipo de ajuste (receita ou despesa)
-  const categoryName = difference.isPositive() 
-    ? CategoryName.OTHER_INCOME 
-    : CategoryName.OTHER_EXPENSES;
-
-  const differenceAmount = difference.toNumber();
-
-  // Update balance and create adjustment transaction
-  const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-    // Update all balance fields to maintain consistency
-    const updatedAccount = await tx.account.update({
-      where: { id: accountId },
-      data: { 
-        balance: input.newBalance, // Legacy field
-        totalBalance: input.newBalance, // Total balance
-        availableBalance: { increment: differenceAmount }, // Adjust available balance
-        // allocatedBalance remains unchanged (adjustment affects available, not allocated)
-      },
-    });
-
-    const adjustmentTransaction = await tx.transaction.create({
-      data: {
-        householdId,
-        accountId,
-        categoryName,
-        amount: difference.toNumber(),
-        description: input.reason || 'Balance adjustment',
-        date: new Date(),
-        notes: `Previous balance: ${account.balance}, New balance: ${input.newBalance}`,
-        paid: true, // Ajustes são sempre considerados pagos
-      },
-    });
-
-    return {
-      account: updatedAccount,
-      adjustment: adjustmentTransaction,
-    };
-  });
+  const result = await prisma.$transaction(async (tx) =>
+    applyBalanceAdjustment(tx, account, householdId, input.newBalance, input.reason),
+  );
 
   return result;
 }
