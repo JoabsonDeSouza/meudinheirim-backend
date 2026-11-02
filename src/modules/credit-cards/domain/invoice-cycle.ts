@@ -50,6 +50,16 @@ export async function getOrCreateInvoiceForTransaction(
   const status = cycle.periodEnd <= localToday ? InvoiceStatus.CLOSED : InvoiceStatus.OPEN;
   const amountChange = signedInvoiceAmount(input.amount, input.transactionType);
 
+  await tx.creditCardInvoice.updateMany({
+    where: {
+      householdId: input.householdId,
+      cardAccountId: input.cardAccountId,
+      status: InvoiceStatus.OPEN,
+      periodEnd: { lte: new Date(`${localToday}T00:00:00.000Z`) },
+    },
+    data: { status: InvoiceStatus.CLOSED, closedAt: new Date(), version: { increment: 1 } },
+  });
+
   const existing = await tx.creditCardInvoice.findUnique({
     where: { cardAccountId_periodStart: { cardAccountId: input.cardAccountId, periodStart } },
     select: { id: true, status: true },
