@@ -26,6 +26,18 @@ function toCivilDate(value: Date | null): string | null {
   return value?.toISOString().slice(0, 10) ?? null;
 }
 
+function localCivilDateKey(instant: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(instant);
+  const value = (type: Intl.DateTimeFormatPartTypes): string => {
+    const part = parts.find((item) => item.type === type);
+    if (!part) throw new RangeError('Could not resolve recurring local date');
+    return part.value;
+  };
+  return `${value('year')}-${value('month')}-${value('day')}`;
+}
+
 type RecurringWithAccount = Prisma.RecurringTransactionGetPayload<{
   include: { account: { select: { currency: true } } };
 }>;
@@ -351,8 +363,7 @@ export async function listRecurringOccurrencesV1(
     include: { account: { select: { currency: true } }, occurrences: { include: { transaction: true } }, scheduleVersions: true },
     orderBy: [{ startDate: 'asc' }, { id: 'asc' }],
   });
-  const today = new Date();
-  const todayKey = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+  const now = new Date();
   const items: Array<Record<string, unknown>> = [];
   const totals = new Map<string, { totalMinorUnits: number; paidMinorUnits: number; remainingMinorUnits: number; estimatedMinorUnits: number }>();
 
@@ -368,6 +379,7 @@ export async function listRecurringOccurrencesV1(
       let ruleTo = rule.effectiveToDate && rule.effectiveToDate < to ? rule.effectiveToDate : to;
       if (schedule.cancelledAt && schedule.cancelledAt < ruleTo) ruleTo = schedule.cancelledAt;
       if (ruleFrom > ruleTo) continue;
+      const todayForRule = localCivilDateKey(now, rule.timeZone);
       const dates = expandRecurrenceDates({
         startDate: rule.effectiveFromDate,
         from: ruleFrom,
@@ -387,7 +399,7 @@ export async function listRecurringOccurrencesV1(
         ? decimalToMinorUnits(transaction.amount, accountCurrency)
         : decimalToMinorUnits(rule.amount, accountCurrency);
       const paid = transaction?.paid === true;
-      const status = paid ? 'PAID' : date.getTime() < todayKey ? 'OVERDUE' : transaction ? 'PENDING' : 'SCHEDULED';
+      const status = paid ? 'PAID' : dateKey < todayForRule ? 'OVERDUE' : transaction ? 'PENDING' : 'SCHEDULED';
       const summary = totals.get(accountCurrency) ?? { totalMinorUnits: 0, paidMinorUnits: 0, remainingMinorUnits: 0, estimatedMinorUnits: 0 };
       summary.totalMinorUnits += amountMinorUnits;
       if (paid) summary.paidMinorUnits += amountMinorUnits;
