@@ -17,7 +17,7 @@ describe('fixed expense overdue civil date', () => {
   it('uses the due day rather than the creation day and honors the schedule timezone', async () => {
     fixtures.rows = [{
       id: 'synthetic-schedule', accountId: 'synthetic-account', categoryName: 'FOOD',
-      account: { currency: 'BRL' }, occurrences: [], scheduleVersions: [], cancelledAt: null,
+      account: { currency: 'BRL' }, occurrences: [], exclusions: [], scheduleVersions: [], cancelledAt: null,
       startDate: new Date('2026-11-10T00:00:00.000Z'),
       effectiveFromDate: new Date('2026-11-10T00:00:00.000Z'),
       endDate: null, frequency: 'MONTHLY', anchorDay: 10, recurrenceMode: 'ALWAYS',

@@ -26,13 +26,14 @@ import '../shared/config/env.js';
 import { prisma } from '../shared/db/prisma.js';
 import { executeRecurringTransaction } from '../modules/recurring-transactions/recurring-transactions.service.js';
 import { calculateNextRunDate } from '../modules/recurring-transactions/recurrence-date.js';
+import { countProcessedRecurringSlots } from '../modules/recurring-transactions/recurring-slot-count.js';
+import { AppError } from '../shared/errors/index.js';
 
 /**
  * Process all due recurring transactions
  */
-async function processDueRecurringTransactions(): Promise<void> {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0); // Normalize to start of day
+export async function processDueRecurringTransactions(now = new Date()): Promise<void> {
+  const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
 
   console.log(`[CronJob] Starting processing at ${today.toISOString().split('T')[0]}`);
 
@@ -67,37 +68,37 @@ async function processDueRecurringTransactions(): Promise<void> {
 
     for (const recurring of dueRecurring) {
       try {
+        const dueDate = new Date(recurring.nextRunAt);
         // REGRA DE NEGÓCIO: Idempotência - verificar se transação já existe
         const existingTransaction = await prisma.transaction.findFirst({
           where: {
             householdId: recurring.householdId,
             recurringTransactionId: recurring.id,
-            date: today,
+            date: dueDate,
           },
         });
 
         if (existingTransaction) {
           // Transaction already exists - skip (idempotent behavior)
           console.log(
-            `[CronJob] ⏭️  Skipping recurring ${recurring.id} - transaction already exists for ${today.toISOString().split('T')[0]}`
+            `[CronJob] ⏭️  Skipping recurring ${recurring.id} - transaction already exists for ${dueDate.toISOString().split('T')[0]}`
           );
           skippedCount++;
           
           // Still update nextRunAt and lastRunDate to prevent reprocessing
-          const nextRunAt = calculateNextRunDate(today, recurring.frequency, recurring.anchorDay);
-          const occurrenceCount = await prisma.recurringOccurrence.count({
-            where: { recurringTransactionId: recurring.id, occurrenceDate: { gte: recurring.effectiveFromDate } },
-          });
+          const nextRunAt = calculateNextRunDate(dueDate, recurring.frequency, recurring.anchorDay);
+          const slotCount = await countProcessedRecurringSlots(prisma, recurring.id, recurring.effectiveFromDate, dueDate);
           const limitReached = recurring.occurrencesLimit !== null
-            && recurring.occurrencesCountOffset + occurrenceCount >= recurring.occurrencesLimit;
+            && recurring.occurrencesCountOffset + slotCount >= recurring.occurrencesLimit;
           const shouldDeactivate = limitReached || recurring.recurrenceMode === 'ONCE'
-            || (recurring.endDate && nextRunAt > new Date(recurring.endDate));
+            || (recurring.endDate && nextRunAt > new Date(recurring.endDate))
+            || (recurring.cancelledAt && nextRunAt > recurring.cancelledAt);
           
           await prisma.recurringTransaction.update({
             where: { id: recurring.id },
             data: { 
               nextRunAt,
-              lastRunDate: today,
+              lastRunDate: dueDate,
               ...(shouldDeactivate && { isActive: false }),
             },
           });
@@ -108,7 +109,7 @@ async function processDueRecurringTransactions(): Promise<void> {
         const startDate = new Date(recurring.startDate);
         startDate.setHours(0, 0, 0, 0);
         
-        if (today < startDate) {
+        if (dueDate < startDate) {
           // Not yet in the period - skip
           console.log(
             `[CronJob] ⏭️  Skipping recurring ${recurring.id} - startDate is ${startDate.toISOString().split('T')[0]}`
@@ -119,19 +120,18 @@ async function processDueRecurringTransactions(): Promise<void> {
 
         // Scheduler execution creates the occurrence, but never represents payment.
         const result = await executeRecurringTransaction(recurring.id, recurring.householdId, {
-          date: today,
+          date: dueDate,
           paid: false,
         });
 
         // Check if nextRunAt exceeds endDate
         const nextRunAt = result.nextRunAt;
-          const occurrenceCount = await prisma.recurringOccurrence.count({
-            where: { recurringTransactionId: recurring.id, occurrenceDate: { gte: recurring.effectiveFromDate } },
-          });
+          const slotCount = await countProcessedRecurringSlots(prisma, recurring.id, recurring.effectiveFromDate, dueDate);
           const limitReached = recurring.occurrencesLimit !== null
-            && recurring.occurrencesCountOffset + occurrenceCount >= recurring.occurrencesLimit;
+            && recurring.occurrencesCountOffset + slotCount >= recurring.occurrencesLimit;
           const shouldDeactivate = limitReached || recurring.recurrenceMode === 'ONCE'
-            || (recurring.endDate && nextRunAt > new Date(recurring.endDate));
+            || (recurring.endDate && nextRunAt > new Date(recurring.endDate))
+            || (recurring.cancelledAt && nextRunAt > recurring.cancelledAt);
 
         // Deactivate if needed (lastRunDate and nextRunAt already updated by executeRecurringTransaction)
         if (shouldDeactivate) {
@@ -144,6 +144,10 @@ async function processDueRecurringTransactions(): Promise<void> {
         processedCount++;
         console.log('[CronJob] Recurring transaction processed');
       } catch (error) {
+        if (error instanceof AppError && error.code === 'RECURRING_OCCURRENCE_EXCLUDED') {
+          skippedCount += 1;
+          continue;
+        }
         errorCount += 1;
         console.error('[CronJob] Recurring transaction failed', {
           errorName: error instanceof Error ? error.name : 'UnknownError',

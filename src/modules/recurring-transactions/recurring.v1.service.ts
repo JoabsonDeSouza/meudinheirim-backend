@@ -1,11 +1,12 @@
-import { BadRequestError, NotFoundError, OccurrenceAccountConflictError, VersionConflictError } from '../../shared/errors/index.js';
+import { randomUUID } from 'node:crypto';
+import { BadRequestError, NotFoundError, OccurrenceAccountConflictError, RecurringOccurrenceExcludedError, RecurringOccurrencePaidError, VersionConflictError } from '../../shared/errors/index.js';
 import { AccountType, CategoryType, getCategoriesByType, isCategoryOfType } from '../../shared/enums/index.js';
 import { decimalToMinorUnits, minorUnitsToDecimal, type Currency } from '../../shared/money/index.js';
 import { isCustomCategoryName, toCustomCategoryId, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
 import { calculateNextRunDate, expandRecurrenceDates } from './recurrence-date.js';
-import { createTransactionV1, updateTransactionV1 } from '../transactions/transactions.v1.service.js';
+import { createTransactionV1, softDeleteTransactionV1WithTx, updateTransactionV1 } from '../transactions/transactions.v1.service.js';
 import { createTransactionV1Schema, updateTransactionV1Schema } from '../transactions/transactions.v1.schema.js';
 import {
   recurringV1DtoSchema,
@@ -350,6 +351,73 @@ export async function cancelRecurringV1(recurringId: string, householdId: string
   return toRecurringDto(row);
 }
 
+export async function excludeRecurringOccurrenceV1(
+  recurringId: string,
+  occurrenceDate: string,
+  householdId: string,
+  userId: string,
+  scope: 'CURRENT_ONLY' | 'CURRENT_AND_FUTURE' | 'FUTURE_ONLY',
+): Promise<{ recurringTransactionId: string; date: string; scope: typeof scope; replayed: boolean }> {
+  const selectedDate = new Date(`${occurrenceDate}T00:00:00.000Z`);
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT id FROM recurring_transactions WHERE id = ${recurringId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+    const recurring = await tx.recurringTransaction.findFirst({
+      where: { id: recurringId, householdId },
+      include: { scheduleVersions: true },
+    });
+    if (!recurring) throw new NotFoundError('Recurring transaction');
+    const rules = [...recurring.scheduleVersions, { ...recurring, effectiveToDate: null }];
+    const rule = rules.find((item) => item.effectiveFromDate <= selectedDate && (!item.effectiveToDate || item.effectiveToDate >= selectedDate));
+    if (!rule || expandRecurrenceDates({
+      startDate: rule.effectiveFromDate,
+      from: selectedDate,
+      to: selectedDate,
+      frequency: rule.frequency,
+      anchorDay: rule.anchorDay,
+      recurrenceMode: rule.recurrenceMode,
+      occurrencesLimit: rule.occurrencesLimit,
+      occurrencesCountOffset: rule.occurrencesCountOffset,
+      endDate: rule.endDate,
+    }).length === 0) throw new NotFoundError('Recurring occurrence');
+
+    const firstAffectedDate = scope === 'FUTURE_ONLY'
+      ? new Date(selectedDate.getTime() + 86400000)
+      : selectedDate;
+    const materialized = await tx.recurringOccurrence.findMany({
+      where: { recurringTransactionId: recurringId, occurrenceDate: scope === 'CURRENT_ONLY' ? selectedDate : { gte: firstAffectedDate } },
+      include: { transaction: true },
+    });
+    if (scope !== 'FUTURE_ONLY' && materialized.some((item) => item.occurrenceDate.getTime() === selectedDate.getTime() && item.transaction.paid && !item.transaction.deletedAt)) {
+      throw new RecurringOccurrencePaidError();
+    }
+    let changed = false;
+    for (const item of materialized) {
+      if (item.transaction.paid || item.transaction.deletedAt) continue;
+      await softDeleteTransactionV1WithTx(tx, item.transactionId, householdId, userId, randomUUID(), item.transaction.version);
+      changed = true;
+    }
+    if (scope === 'CURRENT_ONLY') {
+      const inserted = await tx.recurringOccurrenceExclusion.createMany({
+        data: [{ recurringTransactionId: recurringId, occurrenceDate: selectedDate }],
+        skipDuplicates: true,
+      });
+      changed ||= inserted.count > 0;
+    } else {
+      const cutoff = scope === 'FUTURE_ONLY' ? selectedDate : new Date(selectedDate.getTime() - 86400000);
+      const effectiveCutoff = recurring.cancelledAt && recurring.cancelledAt < cutoff ? recurring.cancelledAt : cutoff;
+      const keepActive = recurring.isActive && recurring.nextRunAt <= effectiveCutoff;
+      if (!recurring.cancelledAt || cutoff < recurring.cancelledAt || recurring.isActive !== keepActive) {
+        await tx.recurringTransaction.update({
+          where: { id: recurringId },
+          data: { cancelledAt: effectiveCutoff, isActive: keepActive },
+        });
+        changed = true;
+      }
+    }
+    return { recurringTransactionId: recurringId, date: occurrenceDate, scope, replayed: !changed };
+  }, { timeout: 30000 });
+}
+
 export async function listRecurringOccurrencesV1(
   householdId: string,
   fromDate: string,
@@ -360,7 +428,7 @@ export async function listRecurringOccurrencesV1(
   if (to.getTime() - from.getTime() > 366 * 86400000) throw new BadRequestError('Occurrence range cannot exceed 366 days');
   const schedules = await prisma.recurringTransaction.findMany({
     where: { householdId, startDate: { lte: to } },
-    include: { account: { select: { currency: true } }, occurrences: { include: { transaction: true } }, scheduleVersions: true },
+    include: { account: { select: { currency: true } }, occurrences: { include: { transaction: true } }, exclusions: true, scheduleVersions: true },
     orderBy: [{ startDate: 'asc' }, { id: 'asc' }],
   });
   const now = new Date();
@@ -369,6 +437,7 @@ export async function listRecurringOccurrencesV1(
 
   for (const schedule of schedules) {
     const accountCurrency = currency(schedule.account.currency);
+    const excludedDates = new Set(schedule.exclusions.map((item) => toCivilDate(item.occurrenceDate)!));
     const occurrenceByDate = new Map(schedule.occurrences.map((item) => [toCivilDate(item.occurrenceDate)!, item]));
     const rules = [
       ...schedule.scheduleVersions,
@@ -376,14 +445,13 @@ export async function listRecurringOccurrencesV1(
     ];
     for (const rule of rules) {
       const ruleFrom = rule.effectiveFromDate > from ? rule.effectiveFromDate : from;
-      let ruleTo = rule.effectiveToDate && rule.effectiveToDate < to ? rule.effectiveToDate : to;
-      if (schedule.cancelledAt && schedule.cancelledAt < ruleTo) ruleTo = schedule.cancelledAt;
-      if (ruleFrom > ruleTo) continue;
+      const ruleEnd = rule.effectiveToDate && rule.effectiveToDate < to ? rule.effectiveToDate : to;
+      const activeEnd = schedule.cancelledAt && schedule.cancelledAt < ruleEnd ? schedule.cancelledAt : ruleEnd;
       const todayForRule = localCivilDateKey(now, rule.timeZone);
-      const dates = expandRecurrenceDates({
+      const activeDates = ruleFrom > activeEnd ? [] : expandRecurrenceDates({
         startDate: rule.effectiveFromDate,
         from: ruleFrom,
-        to: ruleTo,
+        to: activeEnd,
         frequency: rule.frequency,
         anchorDay: rule.anchorDay,
         recurrenceMode: rule.recurrenceMode,
@@ -391,10 +459,18 @@ export async function listRecurringOccurrencesV1(
         occurrencesCountOffset: rule.occurrencesCountOffset,
         endDate: rule.endDate,
       });
+      const cutoffDate = schedule.cancelledAt;
+      const paidAfterCutoff = cutoffDate
+        ? schedule.occurrences.filter((item) => item.transaction.paid && !item.transaction.deletedAt
+          && item.occurrenceDate > cutoffDate && item.occurrenceDate >= ruleFrom && item.occurrenceDate <= ruleEnd)
+          .map((item) => item.occurrenceDate)
+        : [];
+      const dates = [...activeDates, ...paidAfterCutoff];
       for (const date of dates) {
       const dateKey = toCivilDate(date)!;
       const marker = occurrenceByDate.get(dateKey);
-      const transaction = marker?.transaction;
+      const transaction = marker?.transaction.deletedAt ? null : marker?.transaction;
+      if ((excludedDates.has(dateKey) || (schedule.cancelledAt && date > schedule.cancelledAt)) && !transaction?.paid) continue;
       const amountMinorUnits = transaction
         ? decimalToMinorUnits(transaction.amount, accountCurrency)
         : decimalToMinorUnits(rule.amount, accountCurrency);
@@ -481,6 +557,11 @@ export async function payRecurringOccurrenceV1(
     if (currentMinorUnits !== input.amount.minorUnits) throw new BadRequestError('Occurrence has already been paid with a different amount');
     return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: existingTransaction.id, accountId: existingTransaction.accountId!, status: 'PAID', amount: input.amount, replayed: true };
   }
+  if (recurring.cancelledAt && paidDate > recurring.cancelledAt) throw new RecurringOccurrenceExcludedError();
+  const exclusion = await prisma.recurringOccurrenceExclusion.findUnique({
+    where: { recurringTransactionId_occurrenceDate: { recurringTransactionId: recurringId, occurrenceDate: paidDate } },
+  });
+  if (exclusion) throw new RecurringOccurrenceExcludedError();
   const targetAccountId = input.accountId ?? existingTransaction?.accountId ?? rule.accountId;
   const targetAccount = await prisma.account.findFirst({ where: { id: targetAccountId, householdId, isActive: true } });
   if (!targetAccount) throw new NotFoundError('Active account');
