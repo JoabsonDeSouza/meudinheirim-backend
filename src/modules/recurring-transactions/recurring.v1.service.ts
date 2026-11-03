@@ -530,9 +530,6 @@ export async function payRecurringOccurrenceV1(
     ? (await prisma.category.findFirst({ where: { id: toCustomCategoryId(rule.categoryName)!, householdId }, select: { type: true } }))?.type === CategoryType.INCOME
     : isCategoryOfType(CategoryType.INCOME, rule.categoryName);
   if (incomeCategory) throw new BadRequestError('Recurring payment can only record an expense');
-  const today = new Date();
-  const todayDate = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate()));
-  if (paidDate > todayDate) throw new BadRequestError('Future occurrences cannot be paid before their due date');
   const expectedDates = expandRecurrenceDates({
     startDate: rule.effectiveFromDate,
     from: paidDate,

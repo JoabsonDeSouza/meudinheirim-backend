@@ -43,6 +43,31 @@ afterAll(async () => {
 });
 
 describe('recurring occurrence idempotency', () => {
+  it('allows payment of a future occurrence and preserves its scheduled date', async () => {
+    const future = new Date();
+    future.setUTCDate(future.getUTCDate() + 7);
+    const date = new Date(Date.UTC(future.getUTCFullYear(), future.getUTCMonth(), future.getUTCDate())).toISOString().slice(0, 10);
+    const recurring = await prisma.recurringTransaction.create({
+      data: {
+        householdId,
+        accountId,
+        categoryName: 'FOOD',
+        amount: new Prisma.Decimal('5.00'),
+        frequency: 'DAILY',
+        startDate: new Date(`${date}T00:00:00.000Z`),
+        nextRunAt: new Date(`${date}T00:00:00.000Z`),
+      },
+    });
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/recurring-transactions/${recurring.id}/occurrences/${date}/pay`,
+      headers: { authorization: 'Bearer recurring-user' },
+      payload: { householdId, amount: { minorUnits: 725, currency: 'BRL' }, clientMutationId: 'fa62c535-34bd-40eb-b4fa-efb4a01b6582' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({ date, status: 'PAID', amount: { minorUnits: 725, currency: 'BRL' }, paidAt: expect.any(String), replayed: false });
+  });
+
   it('records an edited fixed occurrence amount and replays payment without changing it', async () => {
     const today = new Date();
     const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())).toISOString().slice(0, 10);
