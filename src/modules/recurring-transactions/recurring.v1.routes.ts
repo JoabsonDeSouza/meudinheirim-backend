@@ -5,8 +5,10 @@ import { ensurePersonalHousehold, getUserByFirebaseUid, requireEditor, requireHo
 import {
   createRecurringV1Schema,
   createRecurringManagedV1Schema,
+  excludeRecurringOccurrenceSchema,
   payRecurringOccurrenceSchema,
   recurringOccurrenceQuerySchema,
+  recurringOccurrenceDateParamSchema,
   recurringV1IdParamSchema,
   updateRecurringV1Schema,
 } from './recurring.v1.schema.js';
@@ -14,6 +16,7 @@ import {
   cancelRecurringV1,
   createRecurringV1,
   createRecurringManagedV1,
+  excludeRecurringOccurrenceV1,
   listRecurringOccurrencesV1,
   listRecurringV1,
   listRecurringManagedV1,
@@ -181,6 +184,31 @@ export async function recurringV1Routes(app: FastifyInstance): Promise<void> {
     const householdId = query.householdId ?? await ensurePersonalHousehold(request);
     await requireEditor(request, householdId);
     return reply.send(await cancelRecurringV1(recurringId, householdId));
+  });
+
+  app.post('/:recurringId/occurrences/:occurrenceDate/exclude', {
+    schema: {
+      description: 'Exclude one unpaid occurrence, this and future unpaid occurrences, or only future unpaid occurrences; paid history is preserved',
+      tags: ['Recurring Transactions'], security: [{ bearerAuth: [] }],
+      params: { type: 'object', required: ['recurringId', 'occurrenceDate'], additionalProperties: false, properties: {
+        recurringId: { type: 'string', format: 'uuid' }, occurrenceDate: { type: 'string', format: 'date' },
+      } },
+      body: { type: 'object', required: ['scope'], additionalProperties: false, properties: {
+        householdId: { type: 'string', format: 'uuid' }, scope: { type: 'string', enum: ['CURRENT_ONLY', 'CURRENT_AND_FUTURE', 'FUTURE_ONLY'] },
+      } },
+      response: { 200: { type: 'object', required: ['recurringTransactionId', 'date', 'scope', 'replayed'], additionalProperties: false, properties: {
+        recurringTransactionId: { type: 'string', format: 'uuid' }, date: { type: 'string', format: 'date' },
+        scope: { type: 'string', enum: ['CURRENT_ONLY', 'CURRENT_AND_FUTURE', 'FUTURE_ONLY'] }, replayed: { type: 'boolean' },
+      } } },
+    },
+  }, async (request, reply) => {
+    const { recurringId, occurrenceDate } = recurringOccurrenceDateParamSchema.parse(request.params);
+    const input = excludeRecurringOccurrenceSchema.parse(request.body);
+    const householdId = input.householdId ?? await ensurePersonalHousehold(request);
+    await requireEditor(request, householdId);
+    const authUser = getAuthUser(request);
+    const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
+    return reply.send(await excludeRecurringOccurrenceV1(recurringId, occurrenceDate, householdId, user.id, input.scope));
   });
 
   app.post('/:recurringId/occurrences/:occurrenceDate/pay', {

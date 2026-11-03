@@ -4,11 +4,12 @@ import type { TransactionType as Prisma_TransactionType } from '../../generated/
 
 import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../../shared/db/prisma.js';
-import { NotFoundError, BadRequestError } from '../../shared/errors/index.js';
+import { NotFoundError, BadRequestError, RecurringOccurrenceExcludedError } from '../../shared/errors/index.js';
 import { isCategoryOfType, CategoryType, AccountType, TransactionType } from '../../shared/enums/index.js';
 import { isCustomCategoryName, toCustomCategoryId } from '../../shared/utils/categoryHelpers.js';
 import { updateBalanceForNormalTransaction, recalculateCreditCardLimit } from '../../shared/services/balance.service.js';
 import { calculateNextRunDate } from './recurrence-date.js';
+import { countProcessedRecurringSlots } from './recurring-slot-count.js';
 import { currencySchema } from '../../shared/money/index.js';
 import { getOrCreateInvoiceForTransaction } from '../credit-cards/domain/invoice-cycle.js';
 import type {
@@ -399,6 +400,29 @@ export async function executeRecurringTransaction(
   // Create the actual transaction and update next run date
   const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`recurring-occurrence:${recurring.id}:${occurrenceDateKey}`}))`;
+    await tx.$executeRaw`SELECT id FROM recurring_transactions WHERE id = ${recurring.id}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+    const fresh = await tx.recurringTransaction.findUniqueOrThrow({ where: { id: recurring.id } });
+    const excluded = await tx.recurringOccurrenceExclusion.findUnique({
+      where: { recurringTransactionId_occurrenceDate: { recurringTransactionId: recurring.id, occurrenceDate: transactionDate } },
+    });
+    if (excluded || (fresh.cancelledAt && transactionDate > fresh.cancelledAt)) {
+      if (transactionDate >= fresh.nextRunAt) {
+        const nextRunAt = calculateNextRunDate(transactionDate, fresh.frequency, fresh.anchorDay);
+        const processedCount = await countProcessedRecurringSlots(tx, recurring.id, fresh.effectiveFromDate, transactionDate);
+        const limitReached = fresh.occurrencesLimit !== null
+          && fresh.occurrencesCountOffset + processedCount >= fresh.occurrencesLimit;
+        await tx.recurringTransaction.update({
+          where: { id: recurring.id },
+          data: {
+            lastRunDate: transactionDate,
+            nextRunAt,
+            ...(fresh.recurrenceMode === 'ONCE' || limitReached || (fresh.endDate && nextRunAt > fresh.endDate) || (fresh.cancelledAt && nextRunAt > fresh.cancelledAt) ? { isActive: false } : {}),
+          },
+        });
+        return { skipped: true as const, nextRunAt };
+      }
+      return { skipped: true as const, nextRunAt: fresh.nextRunAt };
+    }
 
     const existingOccurrence = await tx.recurringOccurrence.findUnique({
       where: {
@@ -485,18 +509,17 @@ export async function executeRecurringTransaction(
     const nextRunAt = calculateNextRunDate(transactionDate, recurring.frequency, recurring.anchorDay);
 
     // Update lastRunDate and nextRunAt
-    const occurrenceCount = await tx.recurringOccurrence.count({
-      where: { recurringTransactionId: recurringId, occurrenceDate: { gte: recurring.effectiveFromDate } },
-    });
-    const reachedLimit = recurring.occurrencesLimit !== null
-      && recurring.occurrencesCountOffset + occurrenceCount >= recurring.occurrencesLimit;
-    const passedEndDate = recurring.endDate !== null && nextRunAt > recurring.endDate;
+    const processedCount = await countProcessedRecurringSlots(tx, recurringId, fresh.effectiveFromDate, transactionDate);
+    const reachedLimit = fresh.occurrencesLimit !== null
+      && fresh.occurrencesCountOffset + processedCount >= fresh.occurrencesLimit;
+    const passedEndDate = fresh.endDate !== null && nextRunAt > fresh.endDate;
+    const passedCutoff = fresh.cancelledAt !== null && nextRunAt > fresh.cancelledAt;
     await tx.recurringTransaction.update({
       where: { id: recurringId },
       data: {
         lastRunDate: transactionDate,
         nextRunAt,
-        ...(reachedLimit || passedEndDate ? { isActive: false } : {}),
+        ...(reachedLimit || passedEndDate || passedCutoff ? { isActive: false } : {}),
       },
     });
 
@@ -506,6 +529,7 @@ export async function executeRecurringTransaction(
     };
   });
 
+  if ('skipped' in result) throw new RecurringOccurrenceExcludedError();
   return result;
 }
 

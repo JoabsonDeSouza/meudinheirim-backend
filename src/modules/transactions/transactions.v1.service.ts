@@ -1,6 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { TransactionType } from '../../generated/prisma/enums.js';
-import { NotFoundError, BadRequestError, OccurrenceAccountConflictError, VersionConflictError } from '../../shared/errors/index.js';
+import { NotFoundError, BadRequestError, OccurrenceAccountConflictError, RecurringOccurrenceExcludedError, VersionConflictError } from '../../shared/errors/index.js';
 import { getCategoriesByType, CategoryType, AccountType } from '../../shared/enums/index.js';
 import type { CategoryName } from '../../shared/enums/index.js';
 import { minorUnitsToDecimal, decimalToMinorUnits, moneyDtoSchema, type Currency } from '../../shared/money/index.js';
@@ -201,6 +201,20 @@ export async function createTransactionV1WithTx(
       throw new BadRequestError('Transaction date must match its recurring occurrence date');
     }
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`recurring-occurrence:${recurringOccurrence.recurringTransactionId}:${occurrenceDateKey}`}))`;
+    await tx.$executeRaw`SELECT id FROM recurring_transactions WHERE id = ${recurringOccurrence.recurringTransactionId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+    const recurring = await tx.recurringTransaction.findFirst({
+      where: { id: recurringOccurrence.recurringTransactionId, householdId },
+      include: { account: { select: { currency: true } } },
+    });
+    if (!recurring) throw new NotFoundError('Recurring transaction');
+    if (recurring.cancelledAt && recurringOccurrence.occurrenceDate > recurring.cancelledAt) throw new RecurringOccurrenceExcludedError();
+    const exclusion = await tx.recurringOccurrenceExclusion.findUnique({
+      where: { recurringTransactionId_occurrenceDate: {
+        recurringTransactionId: recurringOccurrence.recurringTransactionId,
+        occurrenceDate: recurringOccurrence.occurrenceDate,
+      } },
+    });
+    if (exclusion) throw new RecurringOccurrenceExcludedError();
     const existing = await tx.recurringOccurrence.findUnique({
       where: { recurringTransactionId_occurrenceDate: { recurringTransactionId: recurringOccurrence.recurringTransactionId, occurrenceDate: recurringOccurrence.occurrenceDate } },
       include: { transaction: { include: { account: { select: { currency: true } } } } },
@@ -208,11 +222,6 @@ export async function createTransactionV1WithTx(
     if (existing?.transaction.account) {
       return toDto({ ...existing.transaction, currency: existing.transaction.account.currency });
     }
-    const recurring = await tx.recurringTransaction.findFirst({
-      where: { id: recurringOccurrence.recurringTransactionId, householdId },
-      include: { account: { select: { currency: true } } },
-    });
-    if (!recurring) throw new NotFoundError('Recurring transaction');
     if (recurring.account.currency !== money.currency) {
       throw new BadRequestError('Occurrence account currency must match the recurring schedule');
     }
@@ -435,12 +444,22 @@ export async function softDeleteTransactionV1(
   clientMutationId: string,
   expectedVersion: number,
 ): Promise<TransactionV1Dto> {
+  return prisma.$transaction((tx) => softDeleteTransactionV1WithTx(tx, transactionId, householdId, userId, clientMutationId, expectedVersion));
+}
+
+export async function softDeleteTransactionV1WithTx(
+  tx: Prisma.TransactionClient,
+  transactionId: string,
+  householdId: string,
+  userId: string,
+  clientMutationId: string,
+  expectedVersion: number,
+): Promise<TransactionV1Dto> {
   const identity = {
     userId,
     clientMutationId,
     hash: payloadHash({ operation: 'transaction.delete', transactionId, householdId, expectedVersion }),
   };
-  return prisma.$transaction(async (tx) => {
     const replay = await findMutationReplay(tx, identity, transactionV1DtoSchema);
     if (replay !== null) return replay;
     const existing = await tx.transaction.findFirst({
@@ -487,5 +506,4 @@ export async function softDeleteTransactionV1(
       deletedAt,
     });
     return dto;
-  });
 }

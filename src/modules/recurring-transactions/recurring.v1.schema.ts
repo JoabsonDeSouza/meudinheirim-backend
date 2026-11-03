@@ -90,6 +90,18 @@ export const payRecurringOccurrenceSchema = z.object({
 
 export type PayRecurringOccurrenceInput = z.infer<typeof payRecurringOccurrenceSchema>;
 
+export const recurringOccurrenceDateParamSchema = z.object({
+  recurringId: z.string().uuid(),
+  occurrenceDate: civilDateSchema,
+}).strict();
+
+export const excludeRecurringOccurrenceSchema = z.object({
+  householdId: z.string().uuid().optional(),
+  scope: z.enum(['CURRENT_ONLY', 'CURRENT_AND_FUTURE', 'FUTURE_ONLY']),
+}).strict();
+
+export type ExcludeRecurringOccurrenceInput = z.infer<typeof excludeRecurringOccurrenceSchema>;
+
 export const recurringV1DtoSchema = z.object({
   id: z.string().uuid(),
   accountId: z.string().uuid(),

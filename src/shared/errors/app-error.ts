@@ -134,6 +134,18 @@ export class OccurrenceAccountConflictError extends AppError {
   }
 }
 
+export class RecurringOccurrencePaidError extends AppError {
+  constructor() {
+    super('A paid occurrence cannot be excluded; reverse the transaction separately', 409, 'RECURRING_OCCURRENCE_PAID');
+  }
+}
+
+export class RecurringOccurrenceExcludedError extends AppError {
+  constructor() {
+    super('Recurring occurrence was excluded', 409, 'RECURRING_OCCURRENCE_EXCLUDED');
+  }
+}
+
 export class IdempotencyConflictError extends AppError {
   constructor() {
     super('clientMutationId was reused with a different payload', 409, 'IDEMPOTENCY_CONFLICT');

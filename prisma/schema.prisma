@@ -465,6 +465,7 @@ model RecurringTransaction {
   account          Account                    @relation(fields: [accountId], references: [id], onDelete: Cascade)
   transactions     Transaction[]
   occurrences      RecurringOccurrence[]
+  exclusions       RecurringOccurrenceExclusion[]
   scheduleVersions RecurringScheduleVersion[]
 
   // Indexes
@@ -516,6 +517,17 @@ model RecurringOccurrence {
   @@unique([recurringTransactionId, occurrenceDate])
   @@index([occurrenceDate])
   @@map("recurring_occurrences")
+}
+
+model RecurringOccurrenceExclusion {
+  recurringTransactionId String   @map("recurring_transaction_id") @db.Uuid
+  occurrenceDate         DateTime @map("occurrence_date") @db.Date
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  recurringTransaction RecurringTransaction @relation(fields: [recurringTransactionId], references: [id], onDelete: Cascade)
+
+  @@id([recurringTransactionId, occurrenceDate])
+  @@map("recurring_occurrence_exclusions")
 }
 
 model CreditCardInvoice {

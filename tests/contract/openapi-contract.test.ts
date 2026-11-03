@@ -81,6 +81,7 @@ describe('versioned OpenAPI contract', () => {
     expect(document.paths['/v1/recurring-transactions/{recurringId}']?.patch).toBeDefined();
     expect(document.paths['/v1/recurring-transactions/{recurringId}']?.delete).toBeDefined();
     expect(document.paths['/v1/recurring-transactions/{recurringId}/occurrences/{occurrenceDate}/pay']?.post).toBeDefined();
+    expect(document.paths['/v1/recurring-transactions/{recurringId}/occurrences/{occurrenceDate}/exclude']?.post).toBeDefined();
   });
 
   it('documents income as a supported transaction-plan kind', () => {
