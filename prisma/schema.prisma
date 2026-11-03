@@ -284,6 +284,7 @@ model Transaction {
   date                   DateTime        @db.Date
   notes                  String?
   paid                   Boolean         @default(true) // Flag para indicar se a transação já foi paga/recebida
+  paidAt                 DateTime?       @map("paid_at") @db.Timestamptz(3)
   // Transfer fields
   fromAccountId          String?         @map("from_account_id") @db.Uuid // Conta origem (para TRANSFER)
   toAccountId            String?         @map("to_account_id") @db.Uuid // Conta destino (para TRANSFER)

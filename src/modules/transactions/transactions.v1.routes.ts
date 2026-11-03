@@ -30,6 +30,7 @@ const transactionPlanTransactionProperties = {
   timeZone: { type: 'string', maxLength: 64 },
   note: { type: ['string', 'null'], maxLength: 1000 },
   paid: { type: 'boolean' },
+  paidAt: { type: ['string', 'null'], format: 'date-time' },
   createdAt: { type: 'string', format: 'date-time' },
   updatedAt: { type: 'string', format: 'date-time' },
   deletedAt: { type: ['string', 'null'], format: 'date-time' },

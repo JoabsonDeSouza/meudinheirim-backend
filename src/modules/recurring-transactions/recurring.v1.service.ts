@@ -489,6 +489,7 @@ export async function listRecurringOccurrencesV1(
         amount: { minorUnits: amountMinorUnits, currency: accountCurrency },
         isEstimate: rule.kind === 'VARIABLE' && !paid,
         status,
+        paidAt: transaction?.paidAt?.toISOString() ?? null,
         transactionId: transaction?.id ?? null,
         transactionVersion: transaction?.version ?? null,
         description: rule.description,
@@ -513,7 +514,7 @@ export async function payRecurringOccurrenceV1(
   householdId: string,
   userId: string,
   input: PayRecurringOccurrenceInput,
-): Promise<{ recurringTransactionId: string; date: string; transactionId: string; accountId: string; status: 'PAID'; amount: { minorUnits: number; currency: Currency }; replayed: boolean }> {
+): Promise<{ recurringTransactionId: string; date: string; transactionId: string; accountId: string; status: 'PAID'; paidAt: string | null; amount: { minorUnits: number; currency: Currency }; replayed: boolean }> {
   const recurring = await prisma.recurringTransaction.findFirst({
     where: { id: recurringId, householdId },
     include: { account: { select: { currency: true } }, occurrences: { where: { occurrenceDate: new Date(`${occurrenceDate}T00:00:00.000Z`) }, include: { transaction: { include: { account: { select: { id: true, type: true, currency: true } } } } } }, scheduleVersions: true },
@@ -555,7 +556,7 @@ export async function payRecurringOccurrenceV1(
     }
     const currentMinorUnits = decimalToMinorUnits(existingTransaction.amount, accountCurrency);
     if (currentMinorUnits !== input.amount.minorUnits) throw new BadRequestError('Occurrence has already been paid with a different amount');
-    return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: existingTransaction.id, accountId: existingTransaction.accountId!, status: 'PAID', amount: input.amount, replayed: true };
+    return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: existingTransaction.id, accountId: existingTransaction.accountId!, status: 'PAID', paidAt: existingTransaction.paidAt?.toISOString() ?? null, amount: input.amount, replayed: true };
   }
   if (recurring.cancelledAt && paidDate > recurring.cancelledAt) throw new RecurringOccurrenceExcludedError();
   const exclusion = await prisma.recurringOccurrenceExclusion.findUnique({
@@ -586,9 +587,9 @@ export async function payRecurringOccurrenceV1(
       if (!(error instanceof VersionConflictError)) throw error;
       const latest = await prisma.transaction.findFirst({ where: { id: existingTransaction.id, householdId, deletedAt: null } });
       if (!latest?.paid || latest.accountId !== targetAccountId || decimalToMinorUnits(latest.amount, accountCurrency) !== input.amount.minorUnits) throw error;
-      return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: latest.id, accountId: latest.accountId!, status: 'PAID', amount: input.amount, replayed: true };
+      return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: latest.id, accountId: latest.accountId!, status: 'PAID', paidAt: latest.paidAt?.toISOString() ?? null, amount: input.amount, replayed: true };
     }
-    return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: updated.id, accountId: updated.accountId, status: 'PAID', amount: input.amount, replayed: updated.version === existingTransaction.version };
+    return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: updated.id, accountId: updated.accountId, status: 'PAID', paidAt: updated.paidAt, amount: input.amount, replayed: updated.version === existingTransaction.version };
   }
   const created = await createTransactionV1(
     createTransactionV1Schema.parse({
@@ -605,5 +606,6 @@ export async function payRecurringOccurrenceV1(
     userId,
     { recurringTransactionId: recurringId, occurrenceDate: paidDate },
   );
-  return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: created.id, accountId: created.accountId, status: 'PAID', amount: input.amount, replayed: false };
+  const paidAt = await prisma.transaction.findUniqueOrThrow({ where: { id: created.id }, select: { paidAt: true } });
+  return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: created.id, accountId: created.accountId, status: 'PAID', paidAt: paidAt.paidAt?.toISOString() ?? null, amount: input.amount, replayed: false };
 }

@@ -123,6 +123,7 @@ function toDto(row: {
   timeZone: string;
   notes: string | null;
   paid: boolean;
+  paidAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
@@ -146,6 +147,7 @@ function toDto(row: {
     timeZone: row.timeZone,
     note: row.notes,
     paid: row.paid,
+    paidAt: row.paidAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     deletedAt: row.deletedAt?.toISOString() ?? null,
@@ -254,6 +256,7 @@ export async function createTransactionV1WithTx(
       invoiceId,
       notes: input.note,
       paid: input.paid,
+      paidAt: input.paid ? new Date() : null,
       clientMutationId: input.clientMutationId,
       ...(recurringOccurrence ? { recurringTransactionId: recurringOccurrence.recurringTransactionId } : {}),
       ...(installment ? {
@@ -414,6 +417,7 @@ export async function updateTransactionV1(
         invoiceId: nextInvoiceId,
         notes: input.note,
         paid: nextPaid,
+        paidAt: nextPaid ? (existing.paid ? existing.paidAt : new Date()) : null,
         version: { increment: 1 },
         clientMutationId: input.clientMutationId,
       },

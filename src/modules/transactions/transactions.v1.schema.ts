@@ -83,6 +83,7 @@ export const transactionV1DtoSchema = z.object({
   timeZone: timeZoneSchema,
   note: z.string().nullable(),
   paid: z.boolean(),
+  paidAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   deletedAt: z.string().datetime().nullable(),

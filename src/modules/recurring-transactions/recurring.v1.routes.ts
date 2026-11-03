@@ -55,9 +55,9 @@ export async function recurringV1Routes(app: FastifyInstance): Promise<void> {
         properties: { householdId: { type: 'string', format: 'uuid' }, from: { type: 'string', format: 'date' }, to: { type: 'string', format: 'date' } },
       },
       response: { 200: { type: 'object', required: ['items', 'totalsByCurrency'], additionalProperties: false, properties: {
-        items: { type: 'array', items: { type: 'object', required: ['recurringTransactionId', 'date', 'kind', 'amount', 'isEstimate', 'status', 'transactionId', 'transactionVersion', 'description', 'categoryCode', 'accountId'], additionalProperties: false, properties: {
+        items: { type: 'array', items: { type: 'object', required: ['recurringTransactionId', 'date', 'kind', 'amount', 'isEstimate', 'status', 'paidAt', 'transactionId', 'transactionVersion', 'description', 'categoryCode', 'accountId'], additionalProperties: false, properties: {
           recurringTransactionId: { type: 'string', format: 'uuid' }, date: { type: 'string', format: 'date' }, kind: { type: 'string', enum: ['FIXED', 'VARIABLE'] }, amount: moneyOpenApiSchema,
-          isEstimate: { type: 'boolean' }, status: { type: 'string', enum: ['PAID', 'PENDING', 'OVERDUE', 'SCHEDULED'] }, transactionId: { type: ['string', 'null'], format: 'uuid' },
+          isEstimate: { type: 'boolean' }, status: { type: 'string', enum: ['PAID', 'PENDING', 'OVERDUE', 'SCHEDULED'] }, paidAt: { type: ['string', 'null'], format: 'date-time' }, transactionId: { type: ['string', 'null'], format: 'uuid' },
           transactionVersion: { type: ['integer', 'null'] }, description: { type: ['string', 'null'] }, categoryCode: { type: 'string' }, accountId: { type: 'string', format: 'uuid' },
         } } },
         totalsByCurrency: { type: 'array', items: { type: 'object', required: ['currency', 'totalMinorUnits', 'paidMinorUnits', 'remainingMinorUnits', 'estimatedMinorUnits', 'paidPercent'], additionalProperties: false, properties: {
@@ -225,9 +225,9 @@ export async function recurringV1Routes(app: FastifyInstance): Promise<void> {
           minorUnits: { type: 'integer', minimum: 1 }, currency: { type: 'string', enum: ['BRL', 'USD'] },
         }, additionalProperties: false }, clientMutationId: { type: 'string', format: 'uuid' },
       }, additionalProperties: false },
-      response: { 200: { type: 'object', required: ['recurringTransactionId', 'date', 'transactionId', 'accountId', 'status', 'amount', 'replayed'], additionalProperties: false, properties: {
+      response: { 200: { type: 'object', required: ['recurringTransactionId', 'date', 'transactionId', 'accountId', 'status', 'paidAt', 'amount', 'replayed'], additionalProperties: false, properties: {
         recurringTransactionId: { type: 'string', format: 'uuid' }, date: { type: 'string', format: 'date' }, transactionId: { type: 'string', format: 'uuid' }, accountId: { type: 'string', format: 'uuid' },
-        status: { type: 'string', enum: ['PAID'] }, amount: moneyOpenApiSchema, replayed: { type: 'boolean' },
+        status: { type: 'string', enum: ['PAID'] }, paidAt: { type: ['string', 'null'], format: 'date-time' }, amount: moneyOpenApiSchema, replayed: { type: 'boolean' },
       } } },
     },
   }, async (request, reply) => {
