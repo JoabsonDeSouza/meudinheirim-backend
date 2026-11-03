@@ -526,10 +526,6 @@ export async function payRecurringOccurrenceV1(
   const rules = [...recurring.scheduleVersions, { ...recurring, effectiveToDate: null }];
   const rule = rules.find((item) => item.effectiveFromDate <= paidDate && (!item.effectiveToDate || item.effectiveToDate >= paidDate));
   if (!rule) throw new NotFoundError('Recurring occurrence');
-  const baseMinorUnits = decimalToMinorUnits(rule.amount, accountCurrency);
-  if (rule.kind === 'FIXED' && input.amount.minorUnits !== baseMinorUnits) {
-    throw new BadRequestError('Fixed occurrence amount must match the recurring amount');
-  }
   const incomeCategory = isCustomCategoryName(rule.categoryName)
     ? (await prisma.category.findFirst({ where: { id: toCustomCategoryId(rule.categoryName)!, householdId }, select: { type: true } }))?.type === CategoryType.INCOME
     : isCategoryOfType(CategoryType.INCOME, rule.categoryName);

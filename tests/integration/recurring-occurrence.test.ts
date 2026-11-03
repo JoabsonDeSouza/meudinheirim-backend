@@ -43,6 +43,35 @@ afterAll(async () => {
 });
 
 describe('recurring occurrence idempotency', () => {
+  it('records an edited fixed occurrence amount and replays payment without changing it', async () => {
+    const today = new Date();
+    const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())).toISOString().slice(0, 10);
+    const recurring = await prisma.recurringTransaction.create({
+      data: {
+        householdId,
+        accountId,
+        categoryName: 'FOOD',
+        amount: new Prisma.Decimal('5.00'),
+        frequency: 'DAILY',
+        startDate: new Date(`${date}T00:00:00.000Z`),
+        nextRunAt: new Date(`${date}T00:00:00.000Z`),
+      },
+    });
+    const payload = { householdId, amount: { minorUnits: 725, currency: 'BRL' }, clientMutationId: '91a4ecfa-5043-4820-87c1-758fc26ce319' };
+    const url = `/v1/recurring-transactions/${recurring.id}/occurrences/${date}/pay`;
+    const payment = await app.inject({ method: 'POST', url, headers: { authorization: 'Bearer recurring-user' }, payload });
+    expect(payment.statusCode).toBe(200);
+    expect(payment.json()).toMatchObject({ status: 'PAID', amount: payload.amount, paidAt: expect.any(String), replayed: false });
+    const transaction = await prisma.transaction.findUniqueOrThrow({ where: { id: payment.json().transactionId as string } });
+    expect(transaction.amount.toFixed(2)).toBe('7.25');
+    expect(transaction.paidAt?.toISOString()).toBe(payment.json().paidAt);
+
+    const retry = await app.inject({ method: 'POST', url, headers: { authorization: 'Bearer recurring-user' }, payload: { ...payload, clientMutationId: '43d7bb7d-d051-4bec-8d9b-d822ac86b536' } });
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json()).toMatchObject({ status: 'PAID', amount: payload.amount, paidAt: payment.json().paidAt, replayed: true });
+    expect(await prisma.transaction.count({ where: { recurringTransactionId: recurring.id, paid: true, deletedAt: null } })).toBe(1);
+  });
+
   it('continues existing schedules on archived categories, while requiring active categories for new assignments', async () => {
     const today = new Date();
     const date = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())).toISOString().slice(0, 10);
