@@ -124,6 +124,21 @@ async function waitForBlockedAccountLocks(prisma: PrismaClient, expected: number
   throw new Error(`Timed out waiting for ${expected} account-lock waiters`);
 }
 
+async function waitForBlockedInvoiceLocks(prisma: PrismaClient, expected: number): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const rows = await prisma.$queryRaw<Array<{ count: number }>>`
+      SELECT count(*)::int AS count
+      FROM pg_stat_activity
+      WHERE wait_event_type = 'Lock'
+        AND query ILIKE '%pg_advisory_xact_lock%'
+    `;
+    if (rows[0]?.count >= expected) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`Timed out waiting for ${expected} invoice-lifecycle lock waiters`);
+}
+
 beforeAll(async () => {
   await getBootstrapTestDb();
   const { setTokenVerifier } = await import('../../src/shared/auth/token-verifier.js');
@@ -348,7 +363,9 @@ describe('V1 installment group summary and group delete', () => {
       expectedGroupToken: summary.groupToken,
     });
     try {
-      await waitForBlockedAccountLocks(prisma, 2);
+      // PATCH owns the invoice lifecycle lock while waiting on the held account;
+      // group delete must queue on that lifecycle lock before taking any rows.
+      await waitForBlockedInvoiceLocks(prisma, 1);
     } finally {
       releaseLock();
     }
@@ -371,6 +388,93 @@ describe('V1 installment group summary and group delete', () => {
       expect(activeCount).toBe(0);
       expect(balance).toBe('0.00');
     }
+  });
+
+  it('rejects an individual edit when the invoice closes during the request, without changing balances or totals', async () => {
+    const { prisma } = await import('../../src/shared/db/prisma.js');
+    await useFreshCard('edit versus close');
+    const { items } = await createPlan('91919191-1111-4111-8111-111111111111');
+    const item = items[0];
+    const invoiceId = item.invoiceId;
+    if (!invoiceId) throw new Error('missing invoice');
+    const balanceBefore = (await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2);
+    const invoiceBefore = await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
+
+    let signalLocked!: () => void;
+    let releaseLock!: () => void;
+    const locked = new Promise<void>((resolve) => { signalLocked = resolve; });
+    const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const closer = prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice-lifecycle:${invoiceId}`}))`;
+      signalLocked();
+      await release;
+      const result = await tx.creditCardInvoice.updateMany({ where: { id: invoiceId, status: 'OPEN' }, data: { status: 'CLOSED', closedAt: new Date(), version: { increment: 1 } } });
+      expect(result.count).toBe(1);
+    }, { timeout: 15_000 });
+
+    await locked;
+    const editPromise = app.inject({
+      method: 'PATCH',
+      url: `/v1/transactions/${item.id}?householdId=${householdId}`,
+      headers: { authorization: 'Bearer installments-user' },
+      payload: { clientMutationId: '91919191-2222-4222-8222-222222222222', expectedVersion: item.version, amount: { minorUnits: 999, currency: 'BRL' } },
+    });
+    try {
+      await waitForBlockedInvoiceLocks(prisma, 1);
+    } finally {
+      releaseLock();
+    }
+    await closer;
+    const edit = await editPromise;
+
+    expect(edit.statusCode).toBe(400);
+    expect((edit.json() as { error: { message: string } }).error.message).toContain('closed invoice');
+    expect((await prisma.transaction.findUniqueOrThrow({ where: { id: item.id } })).version).toBe(item.version);
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2)).toBe(balanceBefore);
+    expect((await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: invoiceId } })).totalAmount.toFixed(2)).toBe(invoiceBefore.totalAmount.toFixed(2));
+  });
+
+  it('rejects an individual delete when the invoice closes during the request, without partial effects', async () => {
+    const { prisma } = await import('../../src/shared/db/prisma.js');
+    await useFreshCard('delete versus close');
+    const { items } = await createPlan('92929292-1111-4111-8111-111111111111');
+    const item = items[0];
+    const invoiceId = item.invoiceId;
+    if (!invoiceId) throw new Error('missing invoice');
+    const balanceBefore = (await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2);
+    const invoiceBefore = await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
+
+    let signalLocked!: () => void;
+    let releaseLock!: () => void;
+    const locked = new Promise<void>((resolve) => { signalLocked = resolve; });
+    const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+    const closer = prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice-lifecycle:${invoiceId}`}))`;
+      signalLocked();
+      await release;
+      const result = await tx.creditCardInvoice.updateMany({ where: { id: invoiceId, status: 'OPEN' }, data: { status: 'CLOSED', closedAt: new Date(), version: { increment: 1 } } });
+      expect(result.count).toBe(1);
+    }, { timeout: 15_000 });
+
+    await locked;
+    const deletePromise = app.inject({
+      method: 'DELETE',
+      url: `/v1/transactions/${item.id}?householdId=${householdId}&clientMutationId=92929292-2222-4222-8222-222222222222&expectedVersion=${item.version}`,
+      headers: { authorization: 'Bearer installments-user' },
+    });
+    try {
+      await waitForBlockedInvoiceLocks(prisma, 1);
+    } finally {
+      releaseLock();
+    }
+    await closer;
+    const deletion = await deletePromise;
+
+    expect(deletion.statusCode).toBe(400);
+    expect((deletion.json() as { error: { message: string } }).error.message).toContain('closed invoice');
+    expect((await prisma.transaction.findUniqueOrThrow({ where: { id: item.id } })).deletedAt).toBeNull();
+    expect((await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2)).toBe(balanceBefore);
+    expect((await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: invoiceId } })).totalAmount.toFixed(2)).toBe(invoiceBefore.totalAmount.toFixed(2));
   });
 
   it('rejects the whole group when a previously deleted installment makes the count stale, deleting nothing', async () => {

@@ -106,13 +106,15 @@ in this order: invoice lifecycle IDs sorted, account IDs sorted, then transactio
 rows sorted by ID. One group-level mutation receipt is saved; one sync change is
 emitted for each deleted transaction.
 
-Invoice lifecycle coordination: the group delete first acquires the SAME
-`pg_advisory_xact_lock(invoice-lifecycle:<invoiceId>)` advisory lock that the
-invoice close/pay/refund endpoints acquire, then locks accounts before
-transaction rows, matching transaction updates. Invoice statuses are re-read
-after holding the invoice locks. A concurrent invoice closure therefore happens
-strictly before or after the delete window; the whole group is rejected when any
-item landed on a closed invoice. The targeted concurrency test is in
+Invoice lifecycle coordination: group delete, individual edit, and individual
+delete acquire the same `pg_advisory_xact_lock(invoice-lifecycle:<invoiceId>)`
+lock used by invoice close/pay/refund. They re-read invoice status only after
+holding the lock. Edit/delete acquire invoice locks before account locks, then
+transaction-row writes, matching the shared order. An existing destination
+invoice for a moved transaction is locked before mutation too. A concurrent
+invoice closure therefore happens strictly before or after the operation; when
+closure wins, the edit/delete is rejected without partial balance or total
+changes. Deterministic concurrency tests live in
 `tests/integration/transactions-installment-group-v1.test.ts`.
 
 No re-creation of deleted installments: `POST /v1/transactions/plans` with

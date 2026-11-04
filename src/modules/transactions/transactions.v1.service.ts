@@ -9,7 +9,7 @@ import { createPaginatedResponse, buildPaginationArgs } from '../../shared/utils
 import { isCustomCategoryName, toCustomCategoryId, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import { prisma } from '../../shared/db/prisma.js';
 import { adjustInvoiceTotal, getOrCreateInvoiceForTransaction, signedInvoiceAmount } from '../credit-cards/domain/invoice-cycle.js';
-import { civilDateStringAtInstant } from '../credit-cards/domain/billing-cycle.js';
+import { calculateBillingCycle, civilDateStringAtInstant } from '../credit-cards/domain/billing-cycle.js';
 import { appendSyncChange, findMutationReplay, payloadHash, saveMutationReceipt } from '../../shared/sync/idempotency.js';
 import { transactionV1DtoSchema, installmentGroupDeleteV1ResponseSchema, installmentGroupSummaryV1Schema, type CreateTransactionV1Input, type InstallmentGroupDeleteV1Response, type InstallmentGroupSummaryV1, type ListTransactionsV1Query, type TransactionV1Dto, type UpdateTransactionV1Input } from './transactions.v1.schema.js';
 
@@ -110,6 +110,12 @@ async function applyBalanceChange(
       version: { increment: 1 },
     },
   });
+}
+
+async function lockInvoiceLifecycle(tx: Prisma.TransactionClient, invoiceIds: readonly (string | null)[]): Promise<void> {
+  for (const invoiceId of [...new Set(invoiceIds.filter((id): id is string => id !== null))].sort()) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice-lifecycle:${invoiceId}`}))`;
+  }
 }
 
 function toDto(row: {
@@ -354,6 +360,17 @@ export async function updateTransactionV1(
     if (accountChangeRequested && (!options.allowOccurrenceAccountChange || !existing.recurringTransactionId || existing.paid)) {
       throw new BadRequestError('Only an unpaid recurring occurrence can be reassigned to another account');
     }
+    const invoiceIdsToLock: Array<string | null> = [existing.invoiceId];
+    const nextOccurredAt = input.occurredAt ? new Date(input.occurredAt) : existing.occurredAt;
+    if (existing.account.type === AccountType.CREDIT) {
+      const cycle = calculateBillingCycle(nextOccurredAt.toISOString(), existing.account.closingDay, existing.account.dueDay, input.timeZone ?? existing.timeZone);
+      const targetInvoice = await tx.creditCardInvoice.findUnique({
+        where: { cardAccountId_periodStart: { cardAccountId: existing.account.id, periodStart: new Date(`${cycle.periodStart}T00:00:00.000Z`) } },
+        select: { id: true },
+      });
+      invoiceIdsToLock.push(targetInvoice?.id ?? null);
+    }
+    await lockInvoiceLifecycle(tx, invoiceIdsToLock);
     const accountIdsToLock = [...new Set([existing.account.id, ...(accountChangeRequested && input.accountId ? [input.accountId] : [])])].sort();
     for (const accountId of accountIdsToLock) {
       await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
@@ -387,14 +404,13 @@ export async function updateTransactionV1(
         if (invoice?.status !== 'OPEN') throw new BadRequestError('A closed invoice transaction cannot be changed');
         await adjustInvoiceTotal(tx, existing.invoiceId, signedInvoiceAmount(existing.amount, kind === 'income' ? 'INCOME' : 'EXPENSE').negated());
       }
-      const occurredAt = input.occurredAt ? new Date(input.occurredAt) : existing.occurredAt;
       nextInvoiceId = await getOrCreateInvoiceForTransaction(tx, {
         householdId,
         cardAccountId: existing.account.id,
         currency,
         closingDay: existing.account.closingDay,
         dueDay: existing.account.dueDay,
-        occurredAt,
+        occurredAt: nextOccurredAt,
         timeZone: input.timeZone ?? existing.timeZone,
         amount: nextAmount,
         transactionType: kind === 'income' ? 'INCOME' : 'EXPENSE',
@@ -475,6 +491,7 @@ export async function softDeleteTransactionV1WithTx(
     });
     if (!existing || !existing.account) throw new NotFoundError('Transaction');
     if (existing.version !== expectedVersion) throw new VersionConflictError();
+    await lockInvoiceLifecycle(tx, [existing.invoiceId]);
     if (existing.paid) {
       const kind = prismaTypeToKind(existing.type);
       await applyBalanceChange(tx, existing.account.id, balanceChange(existing.amount, kind, existing.account.type).negated());
@@ -491,6 +508,7 @@ export async function softDeleteTransactionV1WithTx(
         signedInvoiceAmount(existing.amount, existing.type === TransactionType.INCOME ? 'INCOME' : 'EXPENSE').negated(),
       );
     }
+
     const deletedAt = new Date();
     const update = await tx.transaction.updateMany({
       where: { id: existing.id, householdId, version: expectedVersion, deletedAt: null },
@@ -717,10 +735,7 @@ export async function softDeleteInstallmentGroupV1WithTx(
     where: { householdId, installmentId: anchor.installmentId, deletedAt: null },
     select: { id: true, accountId: true, invoiceId: true },
   });
-  const invoiceIdsToLock = [...new Set(lockSnapshot.flatMap((item) => item.invoiceId ? [item.invoiceId] : []))].sort();
-  for (const invoiceId of invoiceIdsToLock) {
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice-lifecycle:${invoiceId}`}))`;
-  }
+  await lockInvoiceLifecycle(tx, lockSnapshot.map((item) => item.invoiceId));
   const accountIdsToLock = [...new Set(lockSnapshot.map((item) => item.accountId).filter((id): id is string => id !== null))].sort();
   for (const accountId of accountIdsToLock) {
     await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
