@@ -1,6 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { TransactionType } from '../../generated/prisma/enums.js';
-import { NotFoundError, BadRequestError, OccurrenceAccountConflictError, RecurringOccurrenceExcludedError, VersionConflictError } from '../../shared/errors/index.js';
+import { NotFoundError, BadRequestError, InstallmentGroupConflictError, OccurrenceAccountConflictError, RecurringOccurrenceExcludedError, VersionConflictError } from '../../shared/errors/index.js';
 import { getCategoriesByType, CategoryType, AccountType } from '../../shared/enums/index.js';
 import type { CategoryName } from '../../shared/enums/index.js';
 import { minorUnitsToDecimal, decimalToMinorUnits, moneyDtoSchema, type Currency } from '../../shared/money/index.js';
@@ -10,7 +10,7 @@ import { prisma } from '../../shared/db/prisma.js';
 import { adjustInvoiceTotal, getOrCreateInvoiceForTransaction, signedInvoiceAmount } from '../credit-cards/domain/invoice-cycle.js';
 import { civilDateStringAtInstant } from '../credit-cards/domain/billing-cycle.js';
 import { appendSyncChange, findMutationReplay, payloadHash, saveMutationReceipt } from '../../shared/sync/idempotency.js';
-import { transactionV1DtoSchema, type CreateTransactionV1Input, type ListTransactionsV1Query, type TransactionV1Dto, type UpdateTransactionV1Input } from './transactions.v1.schema.js';
+import { transactionV1DtoSchema, installmentGroupDeleteV1ResponseSchema, installmentGroupSummaryV1Schema, type CreateTransactionV1Input, type InstallmentGroupDeleteV1Response, type InstallmentGroupSummaryV1, type ListTransactionsV1Query, type TransactionV1Dto, type UpdateTransactionV1Input } from './transactions.v1.schema.js';
 
 export interface TransactionV1Page {
   readonly items: readonly TransactionV1Dto[];
@@ -510,4 +510,285 @@ export async function softDeleteTransactionV1WithTx(
       deletedAt,
     });
     return dto;
+}
+
+interface InstallmentGroupItem {
+  id: string;
+  type: TransactionType;
+  amount: Prisma.Decimal;
+  currency: string;
+  categoryName: string | null;
+  accountId: string;
+  invoiceId: string | null;
+  occurredAt: Date;
+  timeZone: string;
+  notes: string | null;
+  paid: boolean;
+  paidAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  version: number;
+  clientMutationId: string;
+  installmentId: string;
+  installmentNumber: number | null;
+  totalInstallments: number | null;
+  installmentTotalAmount: Prisma.Decimal | null;
+}
+
+function groupVersionOf(items: ReadonlyArray<{ version: number; updatedAt: Date }>): number {
+  const versionSum = items.reduce((sum, item) => sum + item.version, 0);
+  const updatedAtSum = items.reduce((sum, item) => sum + item.updatedAt.getTime(), 0);
+  return versionSum + updatedAtSum;
+}
+
+function decimalToMinorUnitsByCurrency(amount: Prisma.Decimal, currency: string): number {
+  return decimalToMinorUnits(amount, validateCurrency(currency));
+}
+
+/**
+ * Reliable impact preview for the mobile confirmation dialog: everything the
+ * GROUP delete would touch, server-side selected by household + installmentId.
+ */
+export async function getInstallmentGroupSummaryV1(
+  transactionId: string,
+  householdId: string,
+): Promise<InstallmentGroupSummaryV1> {
+  const anchor = await prisma.transaction.findFirst({
+    where: { id: transactionId, householdId, deletedAt: null },
+    select: {
+      installmentId: true,
+      installmentNumber: true,
+      totalInstallments: true,
+      account: { select: { currency: true } },
+    },
+  });
+  if (!anchor?.account) throw new NotFoundError('Transaction');
+
+  let items: Array<{
+    amount: Prisma.Decimal;
+    paid: boolean;
+    version: number;
+    updatedAt: Date;
+    invoiceId: string | null;
+    currency: string;
+  }>;
+
+  if (anchor.installmentId === null) {
+    const single = await prisma.transaction.findFirstOrThrow({
+      where: { id: transactionId, householdId, deletedAt: null },
+      select: { amount: true, paid: true, version: true, updatedAt: true, invoiceId: true, account: { select: { currency: true } } },
+    });
+    if (single.account === null) throw new NotFoundError('Transaction');
+    items = [{ amount: single.amount, paid: single.paid, version: single.version, updatedAt: single.updatedAt, invoiceId: single.invoiceId, currency: single.account.currency }];
+  } else {
+    const groupRows = await prisma.transaction.findMany({
+      where: { householdId, installmentId: anchor.installmentId, deletedAt: null },
+      select: { amount: true, paid: true, version: true, updatedAt: true, invoiceId: true, account: { select: { currency: true } } },
+      orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+    });
+    items = groupRows.map((row) => {
+      if (row.account === null) throw new NotFoundError('Transaction');
+      return { amount: row.amount, paid: row.paid, version: row.version, updatedAt: row.updatedAt, invoiceId: row.invoiceId, currency: row.account.currency };
+    });
+  }
+
+  const invoiceIds = [...new Set(items.flatMap((item) => (item.invoiceId ? [item.invoiceId] : [])))];
+  const invoices = invoiceIds.length > 0
+    ? await prisma.creditCardInvoice.findMany({ where: { id: { in: invoiceIds } }, select: { id: true, status: true } })
+    : [];
+  const invoiceStatusById = new Map(invoices.map((invoice) => [invoice.id, invoice.status]));
+  const activeInvoiceIds = new Set(items.flatMap((item) => (item.invoiceId && invoiceStatusById.get(item.invoiceId) === 'OPEN' ? [item.invoiceId] : [])));
+
+  const amounts = new Map<Currency, number>();
+  for (const item of items) {
+    const currency = validateCurrency(item.currency);
+    const minorUnits = decimalToMinorUnitsByCurrency(item.amount, currency);
+    amounts.set(currency, (amounts.get(currency) ?? 0) + minorUnits);
+  }
+
+  return installmentGroupSummaryV1Schema.parse({
+    transactionId,
+    installmentId: anchor.installmentId,
+    isInstallmentGroup: anchor.installmentId !== null,
+    installmentNumber: anchor.installmentNumber,
+    totalInstallments: anchor.totalInstallments,
+    activeCount: items.length,
+    paidCount: items.filter((item) => item.paid).length,
+    openInvoiceCount: activeInvoiceIds.size,
+    groupVersion: groupVersionOf(items),
+    amounts: [...amounts.entries()].map(([currency, minorUnits]) => ({ currency, minorUnits })),
+  });
+}
+
+export async function softDeleteInstallmentGroupV1(
+  transactionId: string,
+  householdId: string,
+  userId: string,
+  clientMutationId: string,
+  expectedGroupCount: number,
+  expectedGroupVersion: number,
+): Promise<InstallmentGroupDeleteV1Response> {
+  return prisma.$transaction((tx) => softDeleteInstallmentGroupV1WithTx(
+    tx,
+    transactionId,
+    householdId,
+    userId,
+    clientMutationId,
+    expectedGroupCount,
+    expectedGroupVersion,
+  ));
+}
+
+/**
+ * Server-side selection by household + installmentId: deletes ALL active (not
+ * deleted) installments of the same purchase, regardless of date or page. The
+ * whole group is rejected atomically when any item cannot be deleted (closed
+ * invoice), and re-checked against the confirmed count/version so concurrent
+ * changes are detected instead of silently deleting a different group.
+ */
+export async function softDeleteInstallmentGroupV1WithTx(
+  tx: Prisma.TransactionClient,
+  transactionId: string,
+  householdId: string,
+  userId: string,
+  clientMutationId: string,
+  expectedGroupCount: number,
+  expectedGroupVersion: number,
+): Promise<InstallmentGroupDeleteV1Response> {
+  const identity = {
+    userId,
+    clientMutationId,
+    hash: payloadHash({
+      operation: 'transaction.delete_group',
+      transactionId,
+      householdId,
+      expectedGroupCount,
+      expectedGroupVersion,
+    }),
+  };
+  const replay = await findMutationReplay(tx, identity, installmentGroupDeleteV1ResponseSchema);
+  if (replay !== null) return replay;
+
+  const anchor = await tx.transaction.findFirst({
+    where: { id: transactionId, householdId, deletedAt: null },
+    select: { id: true, installmentId: true },
+  });
+  if (!anchor) throw new NotFoundError('Transaction');
+  if (anchor.installmentId === null) {
+    throw new BadRequestError('This transaction is not an installment purchase; there is no group to delete');
+  }
+
+  // Row locks serialise concurrent group mutations (create/update/delete) on
+  // the same installment purchase inside this transaction.
+  await tx.$executeRaw`SELECT id FROM transactions WHERE household_id = ${householdId}::uuid AND installment_id = ${anchor.installmentId} AND deleted_at IS NULL FOR UPDATE`;
+
+  const rows = await tx.transaction.findMany({
+    where: { householdId, installmentId: anchor.installmentId, deletedAt: null },
+    include: { account: { select: { id: true, type: true, currency: true } } },
+    orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+  });
+  const items = rows.map((row): InstallmentGroupItem => {
+    if (!row?.account) throw new NotFoundError('Transaction');
+    return {
+      id: row.id,
+      type: row.type,
+      amount: row.amount,
+      currency: row.account.currency,
+      categoryName: row.categoryName,
+      accountId: row.account.id,
+      invoiceId: row.invoiceId,
+      occurredAt: row.occurredAt,
+      timeZone: row.timeZone,
+      notes: row.notes,
+      paid: row.paid,
+      paidAt: row.paidAt,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      version: row.version,
+      clientMutationId: row.clientMutationId,
+      installmentId: row.installmentId ?? (anchor.installmentId as string),
+      installmentNumber: row.installmentNumber,
+      totalInstallments: row.totalInstallments,
+      installmentTotalAmount: row.installmentTotalAmount,
+    };
+  });
+
+  const currentGroupVersion = groupVersionOf(items);
+  if (items.length !== expectedGroupCount || currentGroupVersion !== expectedGroupVersion) {
+    throw new InstallmentGroupConflictError(
+      `Installment group is stale: expected ${expectedGroupCount} items with group version ${expectedGroupVersion}, found ${items.length} items with group version ${currentGroupVersion}; re-fetch the installment summary`,
+    );
+  }
+
+  // Closed-invoice rule: reject the WHOLE group, never delete a subset.
+  const invoices = await tx.creditCardInvoice.findMany({
+    where: { id: { in: [...new Set(items.flatMap((item) => (item.invoiceId ? [item.invoiceId] : [])))] } },
+    select: { id: true, status: true },
+  });
+  const invoiceStatusById = new Map(invoices.map((invoice) => [invoice.id, invoice.status]));
+  const closedInvoiceCount = new Set(items.flatMap((item) => (
+    item.invoiceId && invoiceStatusById.get(item.invoiceId) !== 'OPEN' ? [item.invoiceId] : []
+  ))).size;
+  if (closedInvoiceCount > 0) {
+    throw new BadRequestError(
+      `Cannot delete the installment group: ${closedInvoiceCount} of the ${items.length} transactions belong to closed invoices`,
+    );
+  }
+
+  const deletedAt = new Date();
+  for (const item of items) {
+    if (item.paid) {
+      const account = rows.find((row) => row.id === item.id)?.account;
+      if (!account) throw new NotFoundError('Transaction');
+      await applyBalanceChange(tx, item.accountId, balanceChange(item.amount, prismaTypeToKind(item.type), account.type).negated());
+    }
+    if (item.invoiceId) {
+      await adjustInvoiceTotal(
+        tx,
+        item.invoiceId,
+        signedInvoiceAmount(item.amount, item.type === TransactionType.INCOME ? 'INCOME' : 'EXPENSE').negated(),
+      );
+    }
+  }
+  for (const item of items) {
+    const update = await tx.transaction.updateMany({
+      where: { id: item.id, householdId, version: item.version, deletedAt: null },
+      data: { deletedAt, version: { increment: 1 }, clientMutationId },
+    });
+    if (update.count !== 1) throw new VersionConflictError();
+  }
+
+  const deletedIds = items.map((item) => item.id);
+  const deletedRows = await tx.transaction.findMany({
+    where: { id: { in: deletedIds } },
+    include: { account: { select: { currency: true } } },
+    orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
+  });
+  const dtoItems = deletedRows.map((row) => {
+    if (!row?.account) throw new NotFoundError('Transaction');
+    return transactionV1DtoSchema.parse(toDto({ ...row, currency: row.account.currency }));
+  });
+
+  const response = installmentGroupDeleteV1ResponseSchema.parse({
+    type: 'INSTALLMENT_GROUP_DELETE',
+    scope: 'group',
+    installmentId: anchor.installmentId,
+    deletedCount: dtoItems.length,
+    deletedPaidCount: dtoItems.filter((item) => item.paid).length,
+    matchedGroupVersion: currentGroupVersion,
+    items: dtoItems,
+  });
+
+  await saveMutationReceipt(tx, identity, 'transaction_group', anchor.installmentId, response);
+  for (const dto of dtoItems) {
+    await appendSyncChange(tx, {
+      householdId,
+      entityType: 'transaction',
+      entityId: dto.id,
+      version: dto.version,
+      payload: dto,
+      deletedAt,
+    });
+  }
+  return response;
 }

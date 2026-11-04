@@ -3,7 +3,7 @@ import { authMiddleware, getAuthUser } from '../../shared/middleware/auth.middle
 import { ensurePersonalHousehold, getUserByFirebaseUid, requireEditor, requireHouseholdMember } from '../../shared/middleware/authorization.middleware.js';
 import { BadRequestError } from '../../shared/errors/index.js';
 import { createTransactionV1Schema, listTransactionsV1QuerySchema, transactionV1HouseholdQuerySchema, transactionV1ParamsSchema, updateTransactionV1Schema } from './transactions.v1.schema.js';
-import { createTransactionV1, listTransactionsV1, softDeleteTransactionV1, updateTransactionV1 } from './transactions.v1.service.js';
+import { createTransactionV1, getInstallmentGroupSummaryV1, listTransactionsV1, softDeleteInstallmentGroupV1, softDeleteTransactionV1, updateTransactionV1 } from './transactions.v1.service.js';
 import { createTransferV1 } from './transfers.v1.service.js';
 import { createTransferV1Schema } from './transfers.v1.schema.js';
 import { createTransactionPlanV1 } from './transaction-plans.v1.service.js';
@@ -330,9 +330,9 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
     return reply.send(transaction);
   });
 
-  app.delete<{ Params: { transactionId: string } }>('/:transactionId', {
+  app.get<{ Params: { transactionId: string } }>('/:transactionId/installment-summary', {
     schema: {
-      description: 'Soft-delete a versioned transaction',
+      description: 'Impact preview for deleting the installment purchase containing this transaction: server-side group selection by household + installmentId, all items regardless of date or page',
       tags: ['Transactions'],
       security: [{ bearerAuth: [] }],
       params: {
@@ -342,11 +342,39 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
       },
       querystring: {
         type: 'object',
-        required: ['clientMutationId', 'expectedVersion'],
+        properties: { householdId: { type: 'string', format: 'uuid' } },
+      },
+      response: { 200: { type: 'object', additionalProperties: true } },
+    },
+  }, async (request, reply) => {
+    const { transactionId } = transactionV1ParamsSchema.parse(request.params);
+    const query = transactionV1HouseholdQuerySchema.parse(request.query);
+    const householdId = query.householdId ?? await ensurePersonalHousehold(request);
+    await requireHouseholdMember(request, householdId);
+    const summary = await getInstallmentGroupSummaryV1(transactionId, householdId);
+    return reply.send(summary);
+  });
+
+  app.delete<{ Params: { transactionId: string } }>('/:transactionId', {
+    schema: {
+      description: 'Soft-delete a versioned transaction (deleteScope=individual, default) or ALL not-yet-deleted installments of the same purchase (deleteScope=group), never a partial subset',
+      tags: ['Transactions'],
+      security: [{ bearerAuth: [] }],
+      params: {
+        type: 'object',
+        required: ['transactionId'],
+        properties: { transactionId: { type: 'string', format: 'uuid' } },
+      },
+      querystring: {
+        type: 'object',
+        required: ['clientMutationId'],
         properties: {
           householdId: { type: 'string', format: 'uuid' },
           clientMutationId: { type: 'string', format: 'uuid' },
           expectedVersion: { type: 'integer', minimum: 1 },
+          deleteScope: { type: 'string', enum: ['individual', 'group'], default: 'individual' },
+          expectedGroupCount: { type: 'integer', minimum: 1 },
+          expectedGroupVersion: { type: 'integer', minimum: 1 },
         },
       },
       response: { 200: { type: 'object', additionalProperties: true } },
@@ -356,11 +384,28 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
     const query = transactionV1HouseholdQuerySchema.parse(request.query);
     const householdId = query.householdId ?? await ensurePersonalHousehold(request);
     await requireEditor(request, householdId);
-    if (!query.clientMutationId || !query.expectedVersion) {
-      throw new BadRequestError('clientMutationId and expectedVersion are required for delete');
+    if (!query.clientMutationId) {
+      throw new BadRequestError('clientMutationId is required for delete');
     }
     const authUser = getAuthUser(request);
     const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
+    if (query.deleteScope === 'group') {
+      if (!query.expectedGroupCount || !query.expectedGroupVersion) {
+        throw new BadRequestError('expectedGroupCount and expectedGroupVersion are required for a group delete; fetch the installment summary first');
+      }
+      const group = await softDeleteInstallmentGroupV1(
+        transactionId,
+        householdId,
+        user.id,
+        query.clientMutationId,
+        query.expectedGroupCount,
+        query.expectedGroupVersion,
+      );
+      return reply.send(group);
+    }
+    if (!query.expectedVersion) {
+      throw new BadRequestError('expectedVersion is required when deleteScope is individual');
+    }
     const transaction = await softDeleteTransactionV1(
       transactionId,
       householdId,

@@ -70,6 +70,9 @@ export const transactionV1HouseholdQuerySchema = z.object({
   householdId: z.string().uuid().optional(),
   clientMutationId: z.string().uuid().optional(),
   expectedVersion: z.coerce.number().int().positive().optional(),
+  deleteScope: z.enum(['individual', 'group']).default('individual').optional(),
+  expectedGroupCount: z.coerce.number().int().positive().optional(),
+  expectedGroupVersion: z.coerce.number().int().positive().optional(),
 }).strict();
 
 export const transactionV1DtoSchema = z.object({
@@ -96,3 +99,37 @@ export const transactionV1DtoSchema = z.object({
 }).strict();
 
 export type TransactionV1Dto = z.infer<typeof transactionV1DtoSchema>;
+
+/** Snapshot of the active (non-deleted) items of one installment purchase. */
+export const installmentGroupSummaryV1Schema = z.object({
+  transactionId: z.string().uuid(),
+  installmentId: z.string().uuid().nullable(),
+  isInstallmentGroup: z.boolean(),
+  installmentNumber: z.number().int().positive().nullable(),
+  totalInstallments: z.number().int().positive().nullable(),
+  /** Active (not deleted) transactions of the purchase; 0 only when every item is already deleted. */
+  activeCount: z.number().int().nonnegative(),
+  /** Of the active ones, how many are paid (balance reversals are needed). */
+  paidCount: z.number().int().nonnegative(),
+  /** Of the active ones, how many are attached to OPEN invoices (deletable). */
+  openInvoiceCount: z.number().int().nonnegative(),
+  /** Deterministic aggregate of active item versions; changes on any group modification. */
+  groupVersion: z.number().int().positive(),
+  /** Sum of active amounts per currency (installments never mix currencies, but stay exact anyway). */
+  amounts: z.array(z.object({ currency: z.string(), minorUnits: z.number().int() }).strict()),
+}).strict();
+
+export type InstallmentGroupSummaryV1 = z.infer<typeof installmentGroupSummaryV1Schema>;
+
+export const installmentGroupDeleteV1ResponseSchema = z.object({
+  type: z.literal('INSTALLMENT_GROUP_DELETE'),
+  scope: z.literal('group'),
+  installmentId: z.string().uuid(),
+  deletedCount: z.number().int().positive(),
+  deletedPaidCount: z.number().int().nonnegative(),
+  /** Group version that matched; equals the preview groupVersion after no concurrent change. */
+  matchedGroupVersion: z.number().int().positive(),
+  items: z.array(transactionV1DtoSchema).min(1),
+}).strict();
+
+export type InstallmentGroupDeleteV1Response = z.infer<typeof installmentGroupDeleteV1ResponseSchema>;

@@ -152,6 +152,13 @@ export class IdempotencyConflictError extends AppError {
   }
 }
 
+/** 409: the installment group is stale (count or version changed) since it was confirmed; re-read the summary */
+export class InstallmentGroupConflictError extends AppError {
+  constructor(message: string = 'Installment group changed concurrently; re-fetch the installment summary and confirm again') {
+    super(message, 409, 'INSTALLMENT_GROUP_CONFLICT');
+  }
+}
+
 export class InvoiceLifecycleRequiredError extends AppError {
   constructor() {
     super('Invoice actions require the persisted invoice lifecycle API', 410, 'INVOICE_LIFECYCLE_REQUIRED');
