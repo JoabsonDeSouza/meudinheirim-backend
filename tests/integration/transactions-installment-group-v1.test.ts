@@ -143,8 +143,6 @@ describe('V1 installment group summary and group delete', () => {
     const { installmentId, items } = await createPlan('11111111-1111-4111-8111-111111111111');
     expect(items).toHaveLength(3);
 
-    const balanceBefore = (await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2);
-
     const summary = await summaryOf(items[0].id);
     expect(summary).toMatchObject({
       transactionId: items[0].id,
@@ -296,6 +294,12 @@ describe('V1 installment group summary and group delete', () => {
       headers: { authorization: 'Bearer installments-user' },
     });
     expect(single.statusCode).toBe(200);
+    // Survivors keep the ORIGINAL purchase metadata after an individual delete:
+    // installmentTotalAmount and totalInstallments do not mutate, no renumbering.
+    const survivor = await prisma.transaction.findFirstOrThrow({ where: { id: items[0].id } });
+    expect(survivor.totalInstallments).toBe(3);
+    expect(survivor.installmentTotalAmount?.toFixed(2)).toBe('30.00');
+    expect(survivor.installmentNumber).toBe(1);
     const balanceAtAttempt = (await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2);
 
     // Group confirmed with 3 items, but only 2 remain: full rejection, no partial subset.
