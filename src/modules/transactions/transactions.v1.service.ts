@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { TransactionType } from '../../generated/prisma/enums.js';
 import { NotFoundError, BadRequestError, InstallmentGroupConflictError, OccurrenceAccountConflictError, RecurringOccurrenceExcludedError, VersionConflictError } from '../../shared/errors/index.js';
@@ -349,15 +350,17 @@ export async function updateTransactionV1(
       include: { account: { select: { id: true, type: true, currency: true, closingDay: true, dueDay: true } } },
     });
     if (!existing || !existing.account) throw new NotFoundError('Transaction');
-    await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${existing.account.id}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
-    if (existing.version !== input.expectedVersion) throw new VersionConflictError();
     const accountChangeRequested = input.accountId !== undefined && input.accountId !== existing.account.id;
+    if (accountChangeRequested && (!options.allowOccurrenceAccountChange || !existing.recurringTransactionId || existing.paid)) {
+      throw new BadRequestError('Only an unpaid recurring occurrence can be reassigned to another account');
+    }
+    const accountIdsToLock = [...new Set([existing.account.id, ...(accountChangeRequested && input.accountId ? [input.accountId] : [])])].sort();
+    for (const accountId of accountIdsToLock) {
+      await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+    }
+    if (existing.version !== input.expectedVersion) throw new VersionConflictError();
     let nextAccount = existing.account;
     if (accountChangeRequested) {
-      if (!options.allowOccurrenceAccountChange || !existing.recurringTransactionId || existing.paid) {
-        throw new BadRequestError('Only an unpaid recurring occurrence can be reassigned to another account');
-      }
-      await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${input.accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
       const selectedAccount = await tx.account.findFirst({ where: { id: input.accountId, householdId, isActive: true } });
       if (!selectedAccount) throw new NotFoundError('Active account');
       if (existing.account.type === AccountType.CREDIT || selectedAccount.type === AccountType.CREDIT) {
@@ -517,6 +520,7 @@ interface InstallmentGroupItem {
   type: TransactionType;
   amount: Prisma.Decimal;
   currency: string;
+  accountType: string;
   categoryName: string | null;
   accountId: string;
   invoiceId: string | null;
@@ -535,10 +539,36 @@ interface InstallmentGroupItem {
   installmentTotalAmount: Prisma.Decimal | null;
 }
 
-function groupVersionOf(items: ReadonlyArray<{ version: number; updatedAt: Date }>): number {
-  const versionSum = items.reduce((sum, item) => sum + item.version, 0);
-  const updatedAtSum = items.reduce((sum, item) => sum + item.updatedAt.getTime(), 0);
-  return versionSum + updatedAtSum;
+/**
+ * Deterministic snapshot token of the active (non-deleted) items of the group:
+ * SHA-256 over the sorted set of item identities, versions, mutations, amounts,
+ * paid flags and invoice links. Identifies the exact set, so any membership,
+ * version or value change (even with identical counts or sums) invalidates the
+ * previously confirmed group.
+ */
+function installmentGroupToken(
+  items: ReadonlyArray<{
+    id: string;
+    version: number;
+    updatedAt: Date;
+    amount: Prisma.Decimal;
+    paid: boolean;
+    invoiceId: string | null;
+  }>,
+): string {
+  const hash = createHash('sha256');
+  for (const item of [...items].sort((left, right) => left.id.localeCompare(right.id))) {
+    hash.update([
+      item.id,
+      String(item.version),
+      item.updatedAt.toISOString(),
+      item.amount.toFixed(2),
+      item.paid ? '1' : '0',
+      item.invoiceId ?? '-',
+    ].join('|'));
+    hash.update('\n');
+  }
+  return hash.digest('hex');
 }
 
 function decimalToMinorUnitsByCurrency(amount: Prisma.Decimal, currency: string): number {
@@ -565,6 +595,7 @@ export async function getInstallmentGroupSummaryV1(
   if (!anchor?.account) throw new NotFoundError('Transaction');
 
   let items: Array<{
+    id: string;
     amount: Prisma.Decimal;
     paid: boolean;
     version: number;
@@ -576,19 +607,19 @@ export async function getInstallmentGroupSummaryV1(
   if (anchor.installmentId === null) {
     const single = await prisma.transaction.findFirstOrThrow({
       where: { id: transactionId, householdId, deletedAt: null },
-      select: { amount: true, paid: true, version: true, updatedAt: true, invoiceId: true, account: { select: { currency: true } } },
+      select: { id: true, amount: true, paid: true, version: true, updatedAt: true, invoiceId: true, account: { select: { currency: true } } },
     });
     if (single.account === null) throw new NotFoundError('Transaction');
-    items = [{ amount: single.amount, paid: single.paid, version: single.version, updatedAt: single.updatedAt, invoiceId: single.invoiceId, currency: single.account.currency }];
+    items = [{ id: single.id, amount: single.amount, paid: single.paid, version: single.version, updatedAt: single.updatedAt, invoiceId: single.invoiceId, currency: single.account.currency }];
   } else {
     const groupRows = await prisma.transaction.findMany({
       where: { householdId, installmentId: anchor.installmentId, deletedAt: null },
-      select: { amount: true, paid: true, version: true, updatedAt: true, invoiceId: true, account: { select: { currency: true } } },
+      select: { id: true, amount: true, paid: true, version: true, updatedAt: true, invoiceId: true, account: { select: { currency: true } } },
       orderBy: [{ occurredAt: 'asc' }, { id: 'asc' }],
     });
     items = groupRows.map((row) => {
       if (row.account === null) throw new NotFoundError('Transaction');
-      return { amount: row.amount, paid: row.paid, version: row.version, updatedAt: row.updatedAt, invoiceId: row.invoiceId, currency: row.account.currency };
+      return { id: row.id, amount: row.amount, paid: row.paid, version: row.version, updatedAt: row.updatedAt, invoiceId: row.invoiceId, currency: row.account.currency };
     });
   }
 
@@ -597,7 +628,7 @@ export async function getInstallmentGroupSummaryV1(
     ? await prisma.creditCardInvoice.findMany({ where: { id: { in: invoiceIds } }, select: { id: true, status: true } })
     : [];
   const invoiceStatusById = new Map(invoices.map((invoice) => [invoice.id, invoice.status]));
-  const activeInvoiceIds = new Set(items.flatMap((item) => (item.invoiceId && invoiceStatusById.get(item.invoiceId) === 'OPEN' ? [item.invoiceId] : [])));
+  const openInvoiceItemCount = items.filter((item) => item.invoiceId && invoiceStatusById.get(item.invoiceId) === 'OPEN').length;
 
   const amounts = new Map<Currency, number>();
   for (const item of items) {
@@ -614,8 +645,8 @@ export async function getInstallmentGroupSummaryV1(
     totalInstallments: anchor.totalInstallments,
     activeCount: items.length,
     paidCount: items.filter((item) => item.paid).length,
-    openInvoiceCount: activeInvoiceIds.size,
-    groupVersion: groupVersionOf(items),
+    openInvoiceCount: openInvoiceItemCount,
+    groupToken: installmentGroupToken(items),
     amounts: [...amounts.entries()].map(([currency, minorUnits]) => ({ currency, minorUnits })),
   });
 }
@@ -626,7 +657,7 @@ export async function softDeleteInstallmentGroupV1(
   userId: string,
   clientMutationId: string,
   expectedGroupCount: number,
-  expectedGroupVersion: number,
+  expectedGroupToken: string,
 ): Promise<InstallmentGroupDeleteV1Response> {
   return prisma.$transaction((tx) => softDeleteInstallmentGroupV1WithTx(
     tx,
@@ -635,7 +666,7 @@ export async function softDeleteInstallmentGroupV1(
     userId,
     clientMutationId,
     expectedGroupCount,
-    expectedGroupVersion,
+    expectedGroupToken,
   ));
 }
 
@@ -653,7 +684,7 @@ export async function softDeleteInstallmentGroupV1WithTx(
   userId: string,
   clientMutationId: string,
   expectedGroupCount: number,
-  expectedGroupVersion: number,
+  expectedGroupToken: string,
 ): Promise<InstallmentGroupDeleteV1Response> {
   const identity = {
     userId,
@@ -663,7 +694,7 @@ export async function softDeleteInstallmentGroupV1WithTx(
       transactionId,
       householdId,
       expectedGroupCount,
-      expectedGroupVersion,
+      expectedGroupToken,
     }),
   };
   const replay = await findMutationReplay(tx, identity, installmentGroupDeleteV1ResponseSchema);
@@ -678,9 +709,23 @@ export async function softDeleteInstallmentGroupV1WithTx(
     throw new BadRequestError('This transaction is not an installment purchase; there is no group to delete');
   }
 
-  // Row locks serialise concurrent group mutations (create/update/delete) on
-  // the same installment purchase inside this transaction.
-  await tx.$executeRaw`SELECT id FROM transactions WHERE household_id = ${householdId}::uuid AND installment_id = ${anchor.installmentId} AND deleted_at IS NULL FOR UPDATE`;
+  // Use a common lock order: invoice lifecycle advisory locks, then accounts
+  // (sorted), then transaction rows (sorted). Updates lock accounts before
+  // their transaction row; invoice lifecycle endpoints lock invoice first.
+  // This avoids the account↔transaction cycle between an edit and group delete.
+  const lockSnapshot = await tx.transaction.findMany({
+    where: { householdId, installmentId: anchor.installmentId, deletedAt: null },
+    select: { id: true, accountId: true, invoiceId: true },
+  });
+  const invoiceIdsToLock = [...new Set(lockSnapshot.flatMap((item) => item.invoiceId ? [item.invoiceId] : []))].sort();
+  for (const invoiceId of invoiceIdsToLock) {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice-lifecycle:${invoiceId}`}))`;
+  }
+  const accountIdsToLock = [...new Set(lockSnapshot.map((item) => item.accountId).filter((id): id is string => id !== null))].sort();
+  for (const accountId of accountIdsToLock) {
+    await tx.$executeRaw`SELECT id FROM accounts WHERE id = ${accountId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
+  }
+  await tx.$executeRaw`SELECT id FROM transactions WHERE household_id = ${householdId}::uuid AND installment_id = ${anchor.installmentId} AND deleted_at IS NULL ORDER BY id FOR UPDATE`;
 
   const rows = await tx.transaction.findMany({
     where: { householdId, installmentId: anchor.installmentId, deletedAt: null },
@@ -694,6 +739,7 @@ export async function softDeleteInstallmentGroupV1WithTx(
       type: row.type,
       amount: row.amount,
       currency: row.account.currency,
+      accountType: row.account.type,
       categoryName: row.categoryName,
       accountId: row.account.id,
       invoiceId: row.invoiceId,
@@ -713,35 +759,41 @@ export async function softDeleteInstallmentGroupV1WithTx(
     };
   });
 
-  const currentGroupVersion = groupVersionOf(items);
-  if (items.length !== expectedGroupCount || currentGroupVersion !== expectedGroupVersion) {
+  const currentGroupToken = installmentGroupToken(items);
+  if (items.length !== expectedGroupCount || currentGroupToken !== expectedGroupToken) {
     throw new InstallmentGroupConflictError(
-      `Installment group is stale: expected ${expectedGroupCount} items with group version ${expectedGroupVersion}, found ${items.length} items with group version ${currentGroupVersion}; re-fetch the installment summary`,
+      `Installment group is stale: expected ${expectedGroupCount} items with group token ${expectedGroupToken.slice(0, 12)}…, found ${items.length} items with group token ${currentGroupToken.slice(0, 12)}…; re-fetch the installment summary`,
     );
   }
 
-  // Closed-invoice rule: reject the WHOLE group, never delete a subset.
-  const invoices = await tx.creditCardInvoice.findMany({
-    where: { id: { in: [...new Set(items.flatMap((item) => (item.invoiceId ? [item.invoiceId] : [])))] } },
-    select: { id: true, status: true },
-  });
+  // Re-read every invoice after holding its lifecycle lock. The group snapshot
+  // was read before locks only to establish this consistent lock order.
+  const invoiceIds = [...new Set(items.flatMap((item) => (item.invoiceId ? [item.invoiceId] : [])))].sort();
+  const invoices = invoiceIds.length > 0
+    ? await tx.creditCardInvoice.findMany({ where: { id: { in: invoiceIds } }, select: { id: true, status: true } })
+    : [];
   const invoiceStatusById = new Map(invoices.map((invoice) => [invoice.id, invoice.status]));
-  const closedInvoiceCount = new Set(items.flatMap((item) => (
-    item.invoiceId && invoiceStatusById.get(item.invoiceId) !== 'OPEN' ? [item.invoiceId] : []
-  ))).size;
-  if (closedInvoiceCount > 0) {
+  const blockedItems = items.filter((item) => item.invoiceId && invoiceStatusById.get(item.invoiceId) !== 'OPEN');
+  const closedInvoices = new Set(blockedItems.flatMap((item) => (item.invoiceId ? [item.invoiceId] : [])));
+  if (closedInvoices.size > 0) {
     throw new BadRequestError(
-      `Cannot delete the installment group: ${closedInvoiceCount} of the ${items.length} transactions belong to closed invoices`,
+      `Cannot delete the installment group: ${closedInvoices.size} closed invoice(s) block ${blockedItems.length} of the ${items.length} transactions`,
     );
   }
 
+  // Deterministic mutation order (sorted account then invoice then item) keeps
+  // lock acquisition deadlock-safe against create flows that lock the account
+  // row before touching transactions/invoices.
+  const deletableItems = [...items].sort((left, right) =>
+    (left.accountId.localeCompare(right.accountId)) || left.id.localeCompare(right.id));
   const deletedAt = new Date();
-  for (const item of items) {
+  for (const item of deletableItems) {
     if (item.paid) {
-      const account = rows.find((row) => row.id === item.id)?.account;
-      if (!account) throw new NotFoundError('Transaction');
-      await applyBalanceChange(tx, item.accountId, balanceChange(item.amount, prismaTypeToKind(item.type), account.type).negated());
+      await applyBalanceChange(tx, item.accountId, balanceChange(item.amount, prismaTypeToKind(item.type), item.accountType).negated());
     }
+  }
+  for (const item of [...items].sort((left, right) =>
+    ((left.invoiceId ?? '').localeCompare(right.invoiceId ?? '')) || left.id.localeCompare(right.id))) {
     if (item.invoiceId) {
       await adjustInvoiceTotal(
         tx,
@@ -750,7 +802,7 @@ export async function softDeleteInstallmentGroupV1WithTx(
       );
     }
   }
-  for (const item of items) {
+  for (const item of [...items].sort((left, right) => left.id.localeCompare(right.id))) {
     const update = await tx.transaction.updateMany({
       where: { id: item.id, householdId, version: item.version, deletedAt: null },
       data: { deletedAt, version: { increment: 1 }, clientMutationId },
@@ -775,7 +827,7 @@ export async function softDeleteInstallmentGroupV1WithTx(
     installmentId: anchor.installmentId,
     deletedCount: dtoItems.length,
     deletedPaidCount: dtoItems.filter((item) => item.paid).length,
-    matchedGroupVersion: currentGroupVersion,
+    matchedGroupToken: currentGroupToken,
     items: dtoItems,
   });
 

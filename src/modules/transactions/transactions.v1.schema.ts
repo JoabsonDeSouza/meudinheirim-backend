@@ -72,7 +72,7 @@ export const transactionV1HouseholdQuerySchema = z.object({
   expectedVersion: z.coerce.number().int().positive().optional(),
   deleteScope: z.enum(['individual', 'group']).default('individual').optional(),
   expectedGroupCount: z.coerce.number().int().positive().optional(),
-  expectedGroupVersion: z.coerce.number().int().positive().optional(),
+  expectedGroupToken: z.string().regex(/^[0-9a-f]{64}$/).optional(),
 }).strict();
 
 export const transactionV1DtoSchema = z.object({
@@ -111,10 +111,10 @@ export const installmentGroupSummaryV1Schema = z.object({
   activeCount: z.number().int().nonnegative(),
   /** Of the active ones, how many are paid (balance reversals are needed). */
   paidCount: z.number().int().nonnegative(),
-  /** Of the active ones, how many are attached to OPEN invoices (deletable). */
+  /** Of the active ones, how many transaction items are attached to OPEN invoices. */
   openInvoiceCount: z.number().int().nonnegative(),
-  /** Deterministic aggregate of active item versions; changes on any group modification. */
-  groupVersion: z.number().int().positive(),
+  /** Deterministic SHA-256 snapshot of active item identities/versions/values; changes on ANY group modification. */
+  groupToken: z.string().length(64),
   /** Sum of active amounts per currency (installments never mix currencies, but stay exact anyway). */
   amounts: z.array(z.object({ currency: z.string(), minorUnits: z.number().int() }).strict()),
 }).strict();
@@ -127,8 +127,8 @@ export const installmentGroupDeleteV1ResponseSchema = z.object({
   installmentId: z.string().uuid(),
   deletedCount: z.number().int().positive(),
   deletedPaidCount: z.number().int().nonnegative(),
-  /** Group version that matched; equals the preview groupVersion after no concurrent change. */
-  matchedGroupVersion: z.number().int().positive(),
+  /** Group token that matched; equals the preview groupToken after no concurrent change. */
+  matchedGroupToken: z.string().length(64),
   items: z.array(transactionV1DtoSchema).min(1),
 }).strict();
 

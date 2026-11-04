@@ -46,18 +46,21 @@ represents the first installment):
   "isInstallmentGroup": true,
   "installmentNumber": 2,          // n of the selected installment (null when not grouped)
   "totalInstallments": 4,          // N of the purchase (null when not grouped)
-  "activeCount": 4,                // currently deletable (not deleted) items
+  "activeCount": 4,                // non-deleted items; closed invoices may still block the whole group
   "paidCount": 3,                  // of active, ones needing balance reversal
-  "openInvoiceCount": 4,           // of active, items on OPEN invoices (deletable)
-  "groupVersion": 5381460573789,   // deterministic aggregate; changes on ANY group change
+  "openInvoiceCount": 4,           // active transaction items attached to OPEN invoices (not distinct invoices)
+  "groupToken": "64-char sha-256 hex", // snapshot token of the exact member set; changes on ANY group change
   "amounts": [{ "currency": "BRL", "minorUnits": 3000 }]
 }
 ```
 
 404 `Transaction` when missing or outside the household. For a non-installment
 transaction, `isInstallmentGroup` is `false` and the snapshot describes the single
-item (`activeCount: 1`). The confirmation dialog must use these numbers verbatim;
-re-fetch immediately before deleting.
+item (`activeCount: 1`). The confirmation dialog must use these numbers verbatim.
+Submit the `groupToken` and count shown to the user. If either changes before the
+delete, the server returns `409 INSTALLMENT_GROUP_CONFLICT`; fetch a new preview
+and ask the user to confirm the changed impact. Never silently replace the token
+or count after approval.
 
 ## Delete
 
@@ -65,7 +68,7 @@ re-fetch immediately before deleting.
 
 - individual (unchanged): `?clientMutationId=<uuid>&expectedVersion=<int>` →
   200 `TransactionV1Dto`.
-- group: `?clientMutationId=<uuid>&deleteScope=group&expectedGroupCount=<activeCount>&expectedGroupVersion=<groupVersion>`
+- group: `?clientMutationId=<uuid>&deleteScope=group&expectedGroupCount=<activeCount>&expectedGroupToken=<groupToken>`
   → 200:
 
 ```json
@@ -75,7 +78,7 @@ re-fetch immediately before deleting.
   "installmentId": "uuid",
   "deletedCount": 4,
   "deletedPaidCount": 3,
-  "matchedGroupVersion": 5381460573789,
+  "matchedGroupToken": "64-char sha-256 hex",
   "items": ["...TransactionV1Dto, one per deleted item..."]
 }
 ```
@@ -84,12 +87,12 @@ re-fetch immediately before deleting.
 
 | Situation | Status | Code |
 | --- | --- | --- |
-| Group contains an item whose invoice is CLOSED | 400 | `BAD_REQUEST`, message `Cannot delete the installment group: X of N ... closed invoices` |
-| `deleteScope=group` without `expectedGroupCount`/`expectedGroupVersion` | 400 | `BAD_REQUEST` |
+| Group contains an item whose invoice is CLOSED | 400 | `BAD_REQUEST`, message `Cannot delete the installment group: X closed invoice(s) block Y of N transactions` (X = distinct closed invoices, Y = blocked transactions — never mixed with the transaction counts) |
+| `deleteScope=group` without `expectedGroupCount`/`expectedGroupToken` | 400 | `BAD_REQUEST` |
 | Transaction has no `installmentId` and `deleteScope=group` | 400 | `BAD_REQUEST` (`not an installment purchase`) |
 | Individual delete without `expectedVersion` | 400 | `BAD_REQUEST` |
 | Missing/foreign transaction | 404 | `NOT_FOUND` |
-| Group changed (count or version) since confirmation | 409 | `INSTALLMENT_GROUP_CONFLICT` |
+| Group changed (set, counts, versions, timestamps or values) since confirmation | 409 | `INSTALLMENT_GROUP_CONFLICT` |
 | Row concurrently version-bumped inside the atomic window | 409 | `VERSION_CONFLICT` |
 | Same `clientMutationId` with different delete payload | 409 | `IDEMPOTENCY_CONFLICT` (differs = must use a new id) |
 
@@ -98,8 +101,26 @@ with no additional effects.
 
 The group delete is atomic (row locks `FOR UPDATE` on all group rows), rejects the
 whole group when any item is not deletable, and never deletes a partial subset.
-Balance and invoice total reversals are applied per item; a per-item mutation
-receipt and sync change are emitted for every element of the group.
+Balance and invoice total reversals are applied per item after locks are acquired
+in this order: invoice lifecycle IDs sorted, account IDs sorted, then transaction
+rows sorted by ID. One group-level mutation receipt is saved; one sync change is
+emitted for each deleted transaction.
+
+Invoice lifecycle coordination: the group delete first acquires the SAME
+`pg_advisory_xact_lock(invoice-lifecycle:<invoiceId>)` advisory lock that the
+invoice close/pay/refund endpoints acquire, then locks accounts before
+transaction rows, matching transaction updates. Invoice statuses are re-read
+after holding the invoice locks. A concurrent invoice closure therefore happens
+strictly before or after the delete window; the whole group is rejected when any
+item landed on a closed invoice. The targeted concurrency test is in
+`tests/integration/transactions-installment-group-v1.test.ts`.
+
+No re-creation of deleted installments: `POST /v1/transactions/plans` with
+`INSTALLMENTS` materializes every installment at creation and persists only the
+mutation receipt (`SyncMutation`, entity `transaction_plan`); there is no
+persistent installment-plan row. The recurring cron job
+(`src/jobs/processRecurrences.ts`) touches `RecurringTransaction` rows only, so
+deletions are never regenerated.
 
 ## Unpaid installments and edit separation
 

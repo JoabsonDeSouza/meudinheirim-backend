@@ -374,7 +374,7 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
           expectedVersion: { type: 'integer', minimum: 1 },
           deleteScope: { type: 'string', enum: ['individual', 'group'], default: 'individual' },
           expectedGroupCount: { type: 'integer', minimum: 1 },
-          expectedGroupVersion: { type: 'integer', minimum: 1 },
+          expectedGroupToken: { type: 'string', pattern: '^[0-9a-f]{64}$' },
         },
       },
       response: { 200: { type: 'object', additionalProperties: true } },
@@ -390,8 +390,8 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
     const authUser = getAuthUser(request);
     const user = await getUserByFirebaseUid(authUser.uid, authUser.email);
     if (query.deleteScope === 'group') {
-      if (!query.expectedGroupCount || !query.expectedGroupVersion) {
-        throw new BadRequestError('expectedGroupCount and expectedGroupVersion are required for a group delete; fetch the installment summary first');
+      if (!query.expectedGroupCount || !query.expectedGroupToken) {
+        throw new BadRequestError('expectedGroupCount and expectedGroupToken are required for a group delete; fetch the installment summary first');
       }
       const group = await softDeleteInstallmentGroupV1(
         transactionId,
@@ -399,7 +399,7 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
         user.id,
         query.clientMutationId,
         query.expectedGroupCount,
-        query.expectedGroupVersion,
+        query.expectedGroupToken,
       );
       return reply.send(group);
     }
