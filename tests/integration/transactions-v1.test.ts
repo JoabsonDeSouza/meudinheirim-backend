@@ -225,6 +225,22 @@ describe('V1 transaction CRUD and pagination', () => {
       dueDate: '2026-11-15',
       totalAmount: { minorUnits: 3000, currency: 'BRL' },
     });
+
+    const accounts = await app.inject({
+      method: 'GET',
+      url: `/v1/accounts?householdId=${householdId}`,
+      headers: { authorization: 'Bearer tx-v1-owner' },
+    });
+    expect(accounts.statusCode).toBe(200);
+    const listedCard = (accounts.json() as {
+      data: { accounts: Array<{ id: string; creditLimitSummary?: unknown }> };
+    }).data.accounts.find((account) => account.id === cardAccountId);
+    expect(listedCard?.creditLimitSummary).toEqual({
+      total: { minorUnits: 500000, currency: 'BRL' },
+      used: { minorUnits: 3000, currency: 'BRL' },
+      available: { minorUnits: 497000, currency: 'BRL' },
+      utilizationPercent: 0.6,
+    });
   });
 
   it('updates and soft-deletes a transaction', async () => {

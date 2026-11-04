@@ -7,6 +7,7 @@ import { prisma } from '../../shared/db/prisma.js';
 import { AccountArchiveBlockedError, NotFoundError, BadRequestError } from '../../shared/errors/index.js';
 import { CategoryName, AccountType } from '../../shared/enums/index.js';
 import { applyTransfer } from '../../shared/services/balance.service.js';
+import { buildCreditLimitSummary } from './credit-limit-summary.js';
 import type {
   CreateAccountInput,
   UpdateAccountInput,
@@ -279,6 +280,34 @@ export async function listAccounts(query: ListAccountsQuery, userId?: string): P
     ...sharedAccounts,
   ];
 
+  const creditCardIds = allAccounts
+    .filter((account) => account.type === AccountType.CREDIT)
+    .map((account) => account.id);
+  const outstandingDebtByCard = new Map<string, Prisma.Decimal>();
+  if (creditCardIds.length > 0) {
+    const pendingInvoices = await prisma.creditCardInvoice.findMany({
+      where: {
+        cardAccountId: { in: creditCardIds },
+        status: { in: ['OPEN', 'CLOSED'] },
+      },
+      select: {
+        cardAccountId: true,
+        totalAmount: true,
+        payments: {
+          where: { refundedAt: null },
+          select: { amount: true },
+        },
+      },
+    });
+    const zero = new Prisma.Decimal(0);
+    for (const invoice of pendingInvoices) {
+      const paid = invoice.payments.reduce((sum, payment) => sum.add(payment.amount), zero);
+      const outstanding = Prisma.Decimal.max(zero, invoice.totalAmount.sub(paid));
+      const current = outstandingDebtByCard.get(invoice.cardAccountId) ?? zero;
+      outstandingDebtByCard.set(invoice.cardAccountId, current.add(outstanding));
+    }
+  }
+
   // Calculate totals by currency (only from household accounts, not shared)
   const totals = householdAccounts.reduce(
     (acc: Record<string, Prisma.Decimal>, account) => {
@@ -299,6 +328,7 @@ export async function listAccounts(query: ListAccountsQuery, userId?: string): P
       ...account,
       balance: account.balance.toNumber(),
       creditLimit: account.creditLimit ? account.creditLimit.toNumber() : null,
+      creditLimitSummary: buildCreditLimitSummary(account, outstandingDebtByCard.get(account.id)),
       isPersonal: account.isPersonal || false,
       accountOwnerId: account.accountOwnerId || null,
     })),
