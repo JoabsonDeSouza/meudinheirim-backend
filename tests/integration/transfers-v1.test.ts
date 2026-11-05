@@ -222,4 +222,54 @@ describe('atomic V1 transfers', () => {
     const from = await prisma.account.findUniqueOrThrow({ where: { id: fromAccountId } });
     expect(from.availableBalance.toFixed(2)).toBe('100.00');
   });
+
+  it('lists v1 transactions without kind without 400 and without transfer legs', async () => {
+    const fromAccountId = await createAccount('List from', 'BRL', '100.00');
+    const toAccountId = await createAccount('List to', 'BRL', '0.00');
+    const transfer = await app.inject({
+      method: 'POST',
+      url: '/v1/transactions/transfers',
+      headers: { authorization: 'Bearer transfer-owner' },
+      payload: transferPayload(fromAccountId, toAccountId, 'f881992a-33bb-44cc-d5ee-89abcdef0999'),
+    });
+    expect(transfer.statusCode).toBe(201);
+    const transferId = (transfer.json() as { transaction: { id: string } }).transaction.id;
+    const expense = await app.inject({
+      method: 'POST',
+      url: '/v1/transactions',
+      headers: { authorization: 'Bearer transfer-owner' },
+      payload: {
+        householdId,
+        clientMutationId: 'f992aa33-44cc-45dd-e6ff-9abcdef09998',
+        kind: 'expense',
+        amount: { minorUnits: 500, currency: 'BRL' },
+        categoryCode: 'FOOD',
+        accountId: fromAccountId,
+        occurredAt: '2026-10-14T12:00:00.000Z',
+        timeZone: 'America/Sao_Paulo',
+      },
+    });
+    expect(expense.statusCode).toBe(201);
+    const expenseId = (expense.json() as { id: string }).id;
+
+    // Service level: an unfiltered listing must neither throw (400 on the
+    // route) nor serialize TRANSFER/ALLOCATION legs into the v1 DTO.
+    const { listTransactionsV1 } = await import('../../src/modules/transactions/transactions.v1.service.js');
+    const page = await listTransactionsV1({ limit: 100 }, householdId);
+    const ids = page.items.map((item) => item.id);
+    expect(ids).toContain(expenseId);
+    expect(ids).not.toContain(transferId);
+    expect(await prisma.transaction.count({ where: { id: transferId, type: 'TRANSFER' } })).toBe(1);
+
+    // Route level (what the mobile screens call, without kind): 200, no legs.
+    const listed = await app.inject({
+      method: 'GET',
+      url: `/v1/transactions?householdId=${householdId}&limit=100`,
+      headers: { authorization: 'Bearer transfer-owner' },
+    });
+    expect(listed.statusCode).toBe(200);
+    const body = listed.json() as { items: Array<{ id: string }> };
+    expect(body.items.some((item) => item.id === transferId)).toBe(false);
+    expect(body.items.some((item) => item.id === expenseId)).toBe(true);
+  });
 });

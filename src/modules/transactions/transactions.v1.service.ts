@@ -302,7 +302,11 @@ export async function listTransactionsV1(query: ListTransactionsV1Query, househo
     householdId,
     deletedAt: null,
     ...(query.accountId ? { accountId: query.accountId } : {}),
-    ...(query.kind ? { type: kindToPrismaType(query.kind) } : {}),
+    // The v1 DTO only models INCOME/EXPENSE rows: TRANSFER/ALLOCATION legs
+    // carry no category identity and would fail serialization with 400.
+    // Without an explicit kind filter, default to income+expense so transfer
+    // and allocation rows never reach toDto (nor the unfiltered listing).
+    ...(query.kind ? { type: kindToPrismaType(query.kind) } : { type: { in: [TransactionType.INCOME, TransactionType.EXPENSE] } }),
     ...(query.categoryCode ? { categoryName: query.categoryCode } : {}),
     ...(query.installmentId ? { installmentId: query.installmentId } : {}),
     ...((query.occurredAfter || query.occurredBefore) ? {
