@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+current_branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+
+if [ "$current_branch" = "main" ]; then
+  echo "🚨 ERRO: Push direto na MAIN bloqueado localmente!"
+  echo "Crie uma branch e use um Pull Request."
+  exit 1
+fi
+
+exit 0
