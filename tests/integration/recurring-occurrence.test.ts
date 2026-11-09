@@ -165,10 +165,22 @@ describe('recurring occurrence idempotency', () => {
 
   it('re-running the same occurrence returns the original transaction and creates no duplicate', async () => {
     const occurrenceDate = new Date('2026-10-13T00:00:00.000Z');
+    const isolated = await prisma.account.create({
+      data: {
+        householdId,
+        name: 'Re-run same occurrence account',
+        type: 'CHECKING',
+        currency: 'BRL',
+        balance: new Prisma.Decimal('100.00'),
+        availableBalance: new Prisma.Decimal('100.00'),
+        totalBalance: new Prisma.Decimal('100.00'),
+        allocatedBalance: new Prisma.Decimal('0.00'),
+      },
+    });
     const recurring = await prisma.recurringTransaction.create({
       data: {
         householdId,
-        accountId,
+        accountId: isolated.id,
         categoryName: 'FOOD',
         amount: new Prisma.Decimal('12.34'),
         frequency: 'MONTHLY',
@@ -183,7 +195,7 @@ describe('recurring occurrence idempotency', () => {
 
     expect(retry.transaction.id).toBe(first.transaction.id);
     expect(await prisma.transaction.count({ where: { recurringTransactionId: recurring.id, date: occurrenceDate } })).toBe(1);
-    const updatedAccount = await prisma.account.findUniqueOrThrow({ where: { id: accountId } });
+    const updatedAccount = await prisma.account.findUniqueOrThrow({ where: { id: isolated.id } });
     expect(updatedAccount.availableBalance.toFixed(2)).toBe('87.66');
   });
 

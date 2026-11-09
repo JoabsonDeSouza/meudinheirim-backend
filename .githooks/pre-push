@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+while read -r local_ref local_oid remote_ref remote_oid; do
+  if [ "$remote_ref" = "refs/heads/main" ]; then
+    echo "🚨 ERRO: Push direto na MAIN bloqueado localmente!"
+    echo "Crie uma branch e use um Pull Request."
+    exit 1
+  fi
+done
+
+exit 0

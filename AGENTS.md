@@ -18,6 +18,7 @@
 
 ## Workflow and verification
 
+- Never commit or push directly to `main`; use a feature branch and Pull Request. The local `.githooks/pre-push` guard is installed with `git config core.hooksPath .githooks`.
 - Inspect the affected routes, services, schemas, migrations, tests, and project docs before changing behavior.
 - Use `tlc-spec-driven` for nontrivial features and `.specs` requirements/tasks; use `systematic-debugging` for failures. Follow `test-driven-development` for behavior changes and bug fixes and `verification-before-completion` before reporting done.
 - Keep tasks scoped and atomic; run each task's gate before its Conventional Commit. Independently verify feature acceptance outcomes before declaring completion.
