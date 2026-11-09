@@ -47,18 +47,7 @@ export async function getOrCreateInvoiceForTransaction(
   const periodEnd = new Date(`${cycle.periodEnd}T00:00:00.000Z`);
   const dueDate = new Date(`${cycle.dueDate}T00:00:00.000Z`);
   const localToday = civilDateStringAtInstant(new Date().toISOString(), input.timeZone);
-  const status = cycle.periodEnd <= localToday ? InvoiceStatus.CLOSED : InvoiceStatus.OPEN;
   const amountChange = signedInvoiceAmount(input.amount, input.transactionType);
-
-  await tx.creditCardInvoice.updateMany({
-    where: {
-      householdId: input.householdId,
-      cardAccountId: input.cardAccountId,
-      status: InvoiceStatus.OPEN,
-      periodEnd: { lte: new Date(`${localToday}T00:00:00.000Z`) },
-    },
-    data: { status: InvoiceStatus.CLOSED, closedAt: new Date(), version: { increment: 1 } },
-  });
 
   const existing = await tx.creditCardInvoice.findUnique({
     where: { cardAccountId_periodStart: { cardAccountId: input.cardAccountId, periodStart } },
@@ -67,6 +56,19 @@ export async function getOrCreateInvoiceForTransaction(
   if (existing && existing.status !== InvoiceStatus.OPEN) {
     throw new BadRequestError('A closed invoice cycle cannot accept new transactions');
   }
+
+  // Fecha faturas abertas de períodos anteriores já vencidos, exceto a do
+  // período desta transação (que ainda está sendo usada).
+  await tx.creditCardInvoice.updateMany({
+    where: {
+      householdId: input.householdId,
+      cardAccountId: input.cardAccountId,
+      status: InvoiceStatus.OPEN,
+      periodEnd: { lte: new Date(`${localToday}T00:00:00.000Z`) },
+      periodStart: { not: periodStart },
+    },
+    data: { status: InvoiceStatus.CLOSED, closedAt: new Date(), version: { increment: 1 } },
+  });
 
   const invoice = await tx.creditCardInvoice.upsert({
     where: {
@@ -81,7 +83,7 @@ export async function getOrCreateInvoiceForTransaction(
       periodStart,
       periodEnd,
       dueDate,
-      status,
+      status: InvoiceStatus.OPEN,
       currency: input.currency,
       totalAmount: amountChange,
     },
