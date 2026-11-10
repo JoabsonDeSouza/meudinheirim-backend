@@ -1,6 +1,6 @@
 import type { Prisma } from '../../../generated/prisma/client.js';
 import { InvoiceStatus } from '../../../generated/prisma/enums.js';
-import { BadRequestError } from '../../../shared/errors/index.js';
+import { InvoicePaidError } from '../../../shared/errors/index.js';
 import { calculateBillingCycle, civilDateStringAtInstant } from './billing-cycle.js';
 
 export interface InvoiceCycleTransaction {
@@ -54,7 +54,7 @@ export async function getOrCreateInvoiceForTransaction(
     select: { id: true, status: true, paidAt: true },
   });
   if (existing && existing.status === InvoiceStatus.PAID) {
-    throw new BadRequestError('A paid invoice cannot accept new transactions');
+    throw new InvoicePaidError('A paid invoice cannot accept new transactions');
   }
 
   // Fecha faturas abertas de períodos anteriores já vencidos, exceto a do

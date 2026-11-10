@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Prisma } from '../../generated/prisma/client.js';
 import { InvoiceStatus, TransactionType } from '../../generated/prisma/enums.js';
-import { NotFoundError, BadRequestError, InstallmentGroupConflictError, OccurrenceAccountConflictError, RecurringOccurrenceExcludedError, VersionConflictError } from '../../shared/errors/index.js';
+import { NotFoundError, BadRequestError, InstallmentGroupConflictError, OccurrenceAccountConflictError, RecurringOccurrenceExcludedError, VersionConflictError, InvoicePaidError } from '../../shared/errors/index.js';
 import { getCategoriesByType, CategoryType, AccountType } from '../../shared/enums/index.js';
 import type { CategoryName } from '../../shared/enums/index.js';
 import { minorUnitsToDecimal, decimalToMinorUnits, moneyDtoSchema, type Currency } from '../../shared/money/index.js';
@@ -405,7 +405,7 @@ export async function updateTransactionV1(
           where: { id: existing.invoiceId },
           select: { status: true, paidAt: true },
         });
-        if (invoice?.status === InvoiceStatus.PAID) throw new BadRequestError('A paid invoice transaction cannot be changed');
+        if (invoice?.status === InvoiceStatus.PAID) throw new InvoicePaidError('A paid invoice transaction cannot be changed');
         await adjustInvoiceTotal(tx, existing.invoiceId, signedInvoiceAmount(existing.amount, kind === 'income' ? 'INCOME' : 'EXPENSE').negated());
       }
       nextInvoiceId = await getOrCreateInvoiceForTransaction(tx, {
@@ -505,7 +505,7 @@ export async function softDeleteTransactionV1WithTx(
         where: { id: existing.invoiceId },
         select: { status: true, paidAt: true },
       });
-      if (invoice?.status === InvoiceStatus.PAID) throw new BadRequestError('A paid invoice transaction cannot be deleted');
+      if (invoice?.status === InvoiceStatus.PAID) throw new InvoicePaidError('A paid invoice transaction cannot be deleted');
       await adjustInvoiceTotal(
         tx,
         existing.invoiceId,
@@ -795,7 +795,7 @@ export async function softDeleteInstallmentGroupV1WithTx(
   const blockedItems = items.filter((item) => item.invoiceId && invoiceStatusById.get(item.invoiceId)?.status === InvoiceStatus.PAID);
   const paidInvoices = new Set(blockedItems.flatMap((item) => (item.invoiceId ? [item.invoiceId] : [])));
   if (paidInvoices.size > 0) {
-    throw new BadRequestError(
+    throw new InvoicePaidError(
       `Cannot delete the installment group: ${paidInvoices.size} paid invoice(s) block ${blockedItems.length} of the ${items.length} transactions`,
     );
   }
