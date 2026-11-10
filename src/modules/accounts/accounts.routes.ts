@@ -486,9 +486,23 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
         input
       );
 
+      const { account, adjustment } = result;
+
       return reply.send({
         success: true,
-        data: result,
+        data: {
+          account: {
+            ...account,
+            balance: account.balance.toNumber(),
+            totalBalance: account.totalBalance.toNumber(),
+            availableBalance: account.availableBalance.toNumber(),
+            allocatedBalance: account.allocatedBalance.toNumber(),
+            creditLimit: account.creditLimit?.toNumber() ?? null,
+            totalLimit: account.totalLimit?.toNumber() ?? null,
+            availableLimit: account.availableLimit?.toNumber() ?? null,
+          },
+          adjustment,
+        },
       });
     }
   );
