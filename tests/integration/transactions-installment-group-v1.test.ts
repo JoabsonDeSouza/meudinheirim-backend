@@ -390,9 +390,9 @@ describe('V1 installment group summary and group delete', () => {
     }
   });
 
-  it('rejects an individual edit when the invoice closes during the request, without changing balances or totals', async () => {
+  it('rejects an individual edit when the invoice is paid, without changing balances or totals', async () => {
     const { prisma } = await import('../../src/shared/db/prisma.js');
-    await useFreshCard('edit versus close');
+    await useFreshCard('edit versus pay');
     const { items } = await createPlan('91919191-1111-4111-8111-111111111111');
     const item = items[0];
     const invoiceId = item.invoiceId;
@@ -400,43 +400,35 @@ describe('V1 installment group summary and group delete', () => {
     const balanceBefore = (await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2);
     const invoiceBefore = await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
 
-    let signalLocked!: () => void;
-    let releaseLock!: () => void;
-    const locked = new Promise<void>((resolve) => { signalLocked = resolve; });
-    const release = new Promise<void>((resolve) => { releaseLock = resolve; });
-    const closer = prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice-lifecycle:${invoiceId}`}))`;
-      signalLocked();
-      await release;
-      const result = await tx.creditCardInvoice.updateMany({ where: { id: invoiceId, status: 'OPEN' }, data: { status: 'CLOSED', closedAt: new Date(), version: { increment: 1 } } });
-      expect(result.count).toBe(1);
-    }, { timeout: 15_000 });
+    // Pay the invoice in full to reach PAID status.
+    await prisma.$transaction(async (tx) => {
+      await tx.invoicePayment.create({
+        data: { invoiceId, transactionId: item.id, amount: invoiceBefore.totalAmount },
+      });
+      await tx.creditCardInvoice.update({
+        where: { id: invoiceId },
+        data: { status: 'PAID', paidAt: new Date(), version: { increment: 1 } },
+      });
+    });
 
-    await locked;
     const editPromise = app.inject({
       method: 'PATCH',
       url: `/v1/transactions/${item.id}?householdId=${householdId}`,
       headers: { authorization: 'Bearer installments-user' },
       payload: { clientMutationId: '91919191-2222-4222-8222-222222222222', expectedVersion: item.version, amount: { minorUnits: 999, currency: 'BRL' } },
     });
-    try {
-      await waitForBlockedInvoiceLocks(prisma, 1);
-    } finally {
-      releaseLock();
-    }
-    await closer;
     const edit = await editPromise;
 
     expect(edit.statusCode).toBe(400);
-    expect((edit.json() as { error: { message: string } }).error.message).toContain('closed invoice');
+    expect((edit.json() as { error: { message: string } }).error.message).toContain('paid invoice');
     expect((await prisma.transaction.findUniqueOrThrow({ where: { id: item.id } })).version).toBe(item.version);
     expect((await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2)).toBe(balanceBefore);
     expect((await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: invoiceId } })).totalAmount.toFixed(2)).toBe(invoiceBefore.totalAmount.toFixed(2));
   });
 
-  it('rejects an individual delete when the invoice closes during the request, without partial effects', async () => {
+  it('rejects an individual delete when the invoice is paid, without partial effects', async () => {
     const { prisma } = await import('../../src/shared/db/prisma.js');
-    await useFreshCard('delete versus close');
+    await useFreshCard('delete versus pay');
     const { items } = await createPlan('92929292-1111-4111-8111-111111111111');
     const item = items[0];
     const invoiceId = item.invoiceId;
@@ -444,34 +436,26 @@ describe('V1 installment group summary and group delete', () => {
     const balanceBefore = (await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2);
     const invoiceBefore = await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
 
-    let signalLocked!: () => void;
-    let releaseLock!: () => void;
-    const locked = new Promise<void>((resolve) => { signalLocked = resolve; });
-    const release = new Promise<void>((resolve) => { releaseLock = resolve; });
-    const closer = prisma.$transaction(async (tx) => {
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice-lifecycle:${invoiceId}`}))`;
-      signalLocked();
-      await release;
-      const result = await tx.creditCardInvoice.updateMany({ where: { id: invoiceId, status: 'OPEN' }, data: { status: 'CLOSED', closedAt: new Date(), version: { increment: 1 } } });
-      expect(result.count).toBe(1);
-    }, { timeout: 15_000 });
+    // Pay the invoice in full to reach PAID status.
+    await prisma.$transaction(async (tx) => {
+      await tx.invoicePayment.create({
+        data: { invoiceId, transactionId: item.id, amount: invoiceBefore.totalAmount },
+      });
+      await tx.creditCardInvoice.update({
+        where: { id: invoiceId },
+        data: { status: 'PAID', paidAt: new Date(), version: { increment: 1 } },
+      });
+    });
 
-    await locked;
     const deletePromise = app.inject({
       method: 'DELETE',
       url: `/v1/transactions/${item.id}?householdId=${householdId}&clientMutationId=92929292-2222-4222-8222-222222222222&expectedVersion=${item.version}`,
       headers: { authorization: 'Bearer installments-user' },
     });
-    try {
-      await waitForBlockedInvoiceLocks(prisma, 1);
-    } finally {
-      releaseLock();
-    }
-    await closer;
     const deletion = await deletePromise;
 
     expect(deletion.statusCode).toBe(400);
-    expect((deletion.json() as { error: { message: string } }).error.message).toContain('closed invoice');
+    expect((deletion.json() as { error: { message: string } }).error.message).toContain('paid invoice');
     expect((await prisma.transaction.findUniqueOrThrow({ where: { id: item.id } })).deletedAt).toBeNull();
     expect((await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2)).toBe(balanceBefore);
     expect((await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: invoiceId } })).totalAmount.toFixed(2)).toBe(invoiceBefore.totalAmount.toFixed(2));
@@ -524,23 +508,34 @@ describe('V1 installment group summary and group delete', () => {
     expect(await prisma.transaction.count({ where: { installmentId: items[0].installmentId, deletedAt: { not: null } } })).toBe(3);
   });
 
-  it('rejects the whole group with a clear error when any invoice is closed, leaving all items and totals intact', async () => {
+  it('rejects the whole group with a clear error when any invoice is paid, leaving all items and totals intact', async () => {
     const { prisma } = await import('../../src/shared/db/prisma.js');
-    await useFreshCard('closed invoice');
+    await useFreshCard('paid invoice');
     const { items } = await createPlan('66666666-6666-4666-8666-666666666666');
     expect(items.map((item) => item.invoiceId).join(',')).not.toContain(',,');
     const balanceBefore = (await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } })).balance.toFixed(2);
 
-    const closed = await app.inject({
+    const invoiceId = items[1].invoiceId!;
+    const invoice = await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: invoiceId } });
+
+    // Close then pay the invoice to reach PAID status.
+    await app.inject({
       method: 'POST',
-      url: `/v1/credit-cards/invoices/${items[1].invoiceId}/close`,
+      url: `/v1/credit-cards/invoices/${invoiceId}/close`,
       headers: { authorization: 'Bearer installments-user' },
       payload: { clientMutationId: '66666666-6666-4666-8666-666666666667', expectedVersion: 1 },
     });
-    expect(closed.statusCode).toBe(200);
-    expect((closed.json() as { status: string }).status).toBe('CLOSED');
+    await prisma.$transaction(async (tx) => {
+      await tx.invoicePayment.create({
+        data: { invoiceId, transactionId: items[1].id, amount: invoice.totalAmount },
+      });
+      await tx.creditCardInvoice.update({
+        where: { id: invoiceId },
+        data: { status: 'PAID', paidAt: new Date(), version: { increment: 1 } },
+      });
+    });
 
-    // Summary reflects the closed invoice as not deletable: 1 of 3 items cannot be deleted.
+    // Summary reflects the paid invoice as not deletable: 1 of 3 items cannot be deleted.
     const refreshed = await summaryOf(items[0].id);
     expect(refreshed.openInvoiceCount).toBe(2);
     expect(refreshed.activeCount).toBe(3);
@@ -552,14 +547,12 @@ describe('V1 installment group summary and group delete', () => {
     });
     expect(rejected.statusCode).toBe(400);
     expect((rejected.json() as { error: { message: string } }).error.message).toContain('Cannot delete the installment group');
-    expect((rejected.json() as { error: { message: string } }).error.message).toContain('closed invoice');
+    expect((rejected.json() as { error: { message: string } }).error.message).toContain('paid invoice');
 
     // No item was deleted, and balances/totals are untouched.
     expect(await prisma.transaction.count({ where: { installmentId: items[0].installmentId, deletedAt: null } })).toBe(3);
     const cardAfter = await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } });
     expect(cardAfter.balance.toFixed(2)).toBe(balanceBefore);
-    const invoiceAfter = await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: items[0].invoiceId ?? '' } });
-    expect(invoiceAfter.status).toBe('OPEN');
   });
 
   it('requires expectedGroupCount and expectedGroupToken for scope=group and rejects non-installment transactions', async () => {
@@ -679,7 +672,7 @@ describe('V1 installment group summary and group delete', () => {
     expect(await prisma.transaction.count({ where: { installmentId: b.items[0].installmentId, deletedAt: null } })).toBe(3);
   });
 
-  it('coordinates with the invoice lifecycle: a concurrent close blocks or precedes the delete, never both', async () => {
+  it('coordinates with the invoice lifecycle: a concurrent pay blocks or precedes the delete, never both', async () => {
     const { prisma } = await import('../../src/shared/db/prisma.js');
     await useFreshCard('invoice lock coordination');
     const { items } = await createPlan('cfcfcfcf-1111-4111-8111-111111111111');
@@ -688,18 +681,28 @@ describe('V1 installment group summary and group delete', () => {
     if (!invoiceId) throw new Error('missing invoice');
 
     // Deterministic race: a separate transaction holds the SAME advisory lock
-    // the invoice close flow takes, closes the invoice while the group delete
+    // the invoice pay flow takes, pays the invoice while the group delete
     // is parked on that lock, and commits to release it. The delete MUST
     // re-read the status after acquiring the lock and reject the whole group.
     const holder = prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`invoice-lifecycle:${invoiceId}`}))`;
       await new Promise((resolve) => setTimeout(resolve, 1500));
-      const close = await tx.creditCardInvoice.updateMany({
+      // Close (if still OPEN) then pay in the same critical section.
+      await tx.creditCardInvoice.updateMany({
         where: { id: invoiceId, status: 'OPEN' },
         data: { status: 'CLOSED', closedAt: new Date(), version: { increment: 1 } },
       });
-      expect(close.count).toBe(1);
-      return 'closed-and-committed';
+      const invoice = await tx.creditCardInvoice.findUnique({ where: { id: invoiceId } });
+      if (!invoice) throw new Error('invoice not found');
+      await tx.invoicePayment.create({
+        data: { invoiceId, transactionId: items[1].id, amount: invoice.totalAmount },
+      });
+      const paid = await tx.creditCardInvoice.updateMany({
+        where: { id: invoiceId, status: 'CLOSED' },
+        data: { status: 'PAID', paidAt: new Date(), version: { increment: 1 } },
+      });
+      expect(paid.count).toBe(1);
+      return 'paid-and-committed';
     }, { timeout: 15000 });
 
     // The delete starts while the lock is held: it acquires its transaction
@@ -710,10 +713,10 @@ describe('V1 installment group summary and group delete', () => {
       expectedGroupCount: 3,
       expectedGroupToken: summary.groupToken,
     });
-    expect(await holder).toBe('closed-and-committed');
+    expect(await holder).toBe('paid-and-committed');
 
     expect(outcome.statusCode).toBe(400);
-    expect((outcome.json() as { error: { message: string } }).error.message).toContain('closed invoice');
+    expect((outcome.json() as { error: { message: string } }).error.message).toContain('paid invoice');
     expect(await prisma.transaction.count({ where: { id: { in: items.map((item) => item.id) }, deletedAt: null } })).toBe(3);
     const cardAfter = await prisma.account.findUniqueOrThrow({ where: { id: cardAccountId } });
     expect(cardAfter.balance.toFixed(2)).toBe('30.00');

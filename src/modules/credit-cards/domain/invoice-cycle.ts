@@ -51,10 +51,10 @@ export async function getOrCreateInvoiceForTransaction(
 
   const existing = await tx.creditCardInvoice.findUnique({
     where: { cardAccountId_periodStart: { cardAccountId: input.cardAccountId, periodStart } },
-    select: { id: true, status: true },
+    select: { id: true, status: true, paidAt: true },
   });
-  if (existing && existing.status !== InvoiceStatus.OPEN) {
-    throw new BadRequestError('A closed invoice cycle cannot accept new transactions');
+  if (existing && existing.status === InvoiceStatus.PAID) {
+    throw new BadRequestError('A paid invoice cannot accept new transactions');
   }
 
   // Fecha faturas abertas de períodos anteriores já vencidos, exceto a do
