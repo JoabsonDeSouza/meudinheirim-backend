@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Prisma } from '../../generated/prisma/client.js';
-import { TransactionType } from '../../generated/prisma/enums.js';
-import { NotFoundError, BadRequestError, InstallmentGroupConflictError, OccurrenceAccountConflictError, RecurringOccurrenceExcludedError, VersionConflictError } from '../../shared/errors/index.js';
+import { InvoiceStatus, TransactionType } from '../../generated/prisma/enums.js';
+import { NotFoundError, BadRequestError, InstallmentGroupConflictError, OccurrenceAccountConflictError, RecurringOccurrenceExcludedError, VersionConflictError, InvoicePaidError } from '../../shared/errors/index.js';
 import { getCategoriesByType, CategoryType, AccountType } from '../../shared/enums/index.js';
 import type { CategoryName } from '../../shared/enums/index.js';
 import { minorUnitsToDecimal, decimalToMinorUnits, moneyDtoSchema, type Currency } from '../../shared/money/index.js';
@@ -403,9 +403,9 @@ export async function updateTransactionV1(
       if (existing.invoiceId) {
         const invoice = await tx.creditCardInvoice.findUnique({
           where: { id: existing.invoiceId },
-          select: { status: true },
+          select: { status: true, paidAt: true },
         });
-        if (invoice?.status !== 'OPEN') throw new BadRequestError('A closed invoice transaction cannot be changed');
+        if (invoice?.status === InvoiceStatus.PAID) throw new InvoicePaidError('A paid invoice transaction cannot be changed');
         await adjustInvoiceTotal(tx, existing.invoiceId, signedInvoiceAmount(existing.amount, kind === 'income' ? 'INCOME' : 'EXPENSE').negated());
       }
       nextInvoiceId = await getOrCreateInvoiceForTransaction(tx, {
@@ -503,9 +503,9 @@ export async function softDeleteTransactionV1WithTx(
     if (existing.invoiceId) {
       const invoice = await tx.creditCardInvoice.findUnique({
         where: { id: existing.invoiceId },
-        select: { status: true },
+        select: { status: true, paidAt: true },
       });
-      if (invoice?.status !== 'OPEN') throw new BadRequestError('A closed invoice transaction cannot be deleted');
+      if (invoice?.status === InvoiceStatus.PAID) throw new InvoicePaidError('A paid invoice transaction cannot be deleted');
       await adjustInvoiceTotal(
         tx,
         existing.invoiceId,
@@ -789,14 +789,14 @@ export async function softDeleteInstallmentGroupV1WithTx(
   // was read before locks only to establish this consistent lock order.
   const invoiceIds = [...new Set(items.flatMap((item) => (item.invoiceId ? [item.invoiceId] : [])))].sort();
   const invoices = invoiceIds.length > 0
-    ? await tx.creditCardInvoice.findMany({ where: { id: { in: invoiceIds } }, select: { id: true, status: true } })
+    ? await tx.creditCardInvoice.findMany({ where: { id: { in: invoiceIds } }, select: { id: true, status: true, paidAt: true } })
     : [];
-  const invoiceStatusById = new Map(invoices.map((invoice) => [invoice.id, invoice.status]));
-  const blockedItems = items.filter((item) => item.invoiceId && invoiceStatusById.get(item.invoiceId) !== 'OPEN');
-  const closedInvoices = new Set(blockedItems.flatMap((item) => (item.invoiceId ? [item.invoiceId] : [])));
-  if (closedInvoices.size > 0) {
-    throw new BadRequestError(
-      `Cannot delete the installment group: ${closedInvoices.size} closed invoice(s) block ${blockedItems.length} of the ${items.length} transactions`,
+  const invoiceStatusById = new Map(invoices.map((invoice) => [invoice.id, { status: invoice.status, paidAt: invoice.paidAt }]));
+  const blockedItems = items.filter((item) => item.invoiceId && invoiceStatusById.get(item.invoiceId)?.status === InvoiceStatus.PAID);
+  const paidInvoices = new Set(blockedItems.flatMap((item) => (item.invoiceId ? [item.invoiceId] : [])));
+  if (paidInvoices.size > 0) {
+    throw new InvoicePaidError(
+      `Cannot delete the installment group: ${paidInvoices.size} paid invoice(s) block ${blockedItems.length} of the ${items.length} transactions`,
     );
   }
 

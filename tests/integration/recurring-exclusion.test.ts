@@ -177,7 +177,7 @@ describe('managed recurring occurrence exclusion', () => {
     const id = await createSchedule(futureDate, card.id);
     const pending = await executeRecurringTransaction(id, householdId, { date: new Date(`${futureDate}T00:00:00.000Z`), paid: false });
     const pendingRow = await prisma.transaction.findUniqueOrThrow({ where: { id: pending.transaction.id } });
-    await prisma.creditCardInvoice.update({ where: { id: pendingRow.invoiceId! }, data: { status: 'CLOSED' } });
+    await prisma.creditCardInvoice.update({ where: { id: pendingRow.invoiceId! }, data: { status: 'PAID', paidAt: new Date() } });
     const response = await exclude(id, futureDate, 'CURRENT_ONLY');
     expect(response.statusCode).toBe(400);
     expect((await prisma.transaction.findUniqueOrThrow({ where: { id: pending.transaction.id } })).deletedAt).toBeNull();

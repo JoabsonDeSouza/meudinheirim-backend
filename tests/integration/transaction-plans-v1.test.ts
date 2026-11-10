@@ -287,7 +287,8 @@ describe('V1 transaction plans', () => {
         periodStart: new Date('2027-02-10T00:00:00.000Z'),
         periodEnd: new Date('2027-03-10T00:00:00.000Z'),
         dueDate: new Date('2027-03-20T00:00:00.000Z'),
-        status: 'CLOSED',
+        status: 'PAID',
+        paidAt: new Date('2027-03-20T00:00:00.000Z'),
         currency: 'BRL',
         totalAmount: '0.00',
       },
@@ -303,7 +304,7 @@ describe('V1 transaction plans', () => {
       }),
     });
     expect(failed.statusCode).toBe(400);
-    expect(failed.json().error.code).toBe('BAD_REQUEST');
+    expect(failed.json().error.code).toBe('INVOICE_PAID');
     expect(await prisma.transaction.count({ where: { clientMutationId: 'f56789ab-cdef-4012-b345-6789abcdef01' } })).toBe(0);
     expect(await prisma.creditCardInvoice.count({ where: { cardAccountId: rollbackCardAccountId, periodStart: new Date('2027-01-10T00:00:00.000Z') } })).toBe(0);
     expect(await prisma.creditCardInvoice.findUnique({ where: { id: preexistingInvoice.id } })).not.toBeNull();

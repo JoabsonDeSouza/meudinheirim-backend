@@ -171,6 +171,13 @@ export class InvalidInvoiceTransitionError extends AppError {
   }
 }
 
+/** 400: the invoice is paid and cannot accept new transactions, edits or deletions */
+export class InvoicePaidError extends AppError {
+  constructor(message = 'A paid invoice cannot accept new transactions') {
+    super(message, 400, 'INVOICE_PAID');
+  }
+}
+
 // ============================================================================
 // RATE LIMIT ERRORS (429)
 // ============================================================================
