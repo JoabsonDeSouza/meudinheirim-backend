@@ -21,11 +21,14 @@ const transactionPlanMoneySchema = {
 
 const transactionPlanTransactionProperties = {
   id: { type: 'string', format: 'uuid' },
-  kind: { type: 'string', enum: ['expense', 'income'] },
+  kind: { type: 'string', enum: ['expense', 'income', 'transfer'] },
   amount: transactionPlanMoneySchema,
-  categoryCode: { type: 'string' },
-  accountId: { type: 'string', format: 'uuid' },
+  categoryCode: { type: ['string', 'null'] },
+  accountId: { type: ['string', 'null'], format: 'uuid' },
+  fromAccountId: { type: ['string', 'null'], format: 'uuid' },
+  toAccountId: { type: ['string', 'null'], format: 'uuid' },
   invoiceId: { type: ['string', 'null'], format: 'uuid' },
+  paymentId: { type: ['string', 'null'], format: 'uuid' },
   occurredAt: { type: 'string', format: 'date-time' },
   timeZone: { type: 'string', maxLength: 64 },
   note: { type: ['string', 'null'], maxLength: 1000 },
@@ -73,11 +76,12 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
         properties: {
           householdId: { type: 'string', format: 'uuid' },
           accountId: { type: 'string', format: 'uuid' },
-          kind: { type: 'string', enum: ['expense', 'income'] },
+          kind: { type: 'string', enum: ['expense', 'income', 'transfer'] },
           categoryCode: { type: 'string' },
           occurredAfter: { type: 'string', format: 'date-time' },
           occurredBefore: { type: 'string', format: 'date-time' },
           installmentId: { type: 'string', format: 'uuid' },
+          includeTransfers: { type: 'boolean' },
           cursor: { type: 'string', maxLength: 256 },
           limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
         },
@@ -90,8 +94,19 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
               type: 'array',
               items: {
                 type: 'object', additionalProperties: false,
-                required: [...Object.keys(transactionPlanTransactionProperties)],
-                properties: transactionPlanTransactionProperties,
+                required: [
+                  'id', 'kind', 'amount', 'occurredAt', 'timeZone', 'note',
+                  'paid', 'paidAt', 'createdAt', 'updatedAt', 'deletedAt',
+                  'version', 'clientMutationId',
+                ],
+                properties: {
+                  ...transactionPlanTransactionProperties,
+                  categoryCode: { type: ['string', 'null'] },
+                  accountId: { type: ['string', 'null'], format: 'uuid' },
+                  fromAccountId: { type: ['string', 'null'], format: 'uuid' },
+                  toAccountId: { type: ['string', 'null'], format: 'uuid' },
+                  paymentId: { type: ['string', 'null'], format: 'uuid' },
+                },
               },
             },
             pagination: {
@@ -113,8 +128,7 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
     const householdId = query.householdId ?? await ensurePersonalHousehold(request);
     await requireHouseholdMember(request, householdId);
     const page = await listTransactionsV1(query, householdId);
-    return reply.send(page);
-  });
+    return reply.send(page);  });
 
   app.post('/', {
     schema: {
