@@ -582,7 +582,7 @@ export async function payRecurringOccurrenceV1(
       if (!latest?.paid || latest.accountId !== targetAccountId || decimalToMinorUnits(latest.amount, accountCurrency) !== input.amount.minorUnits) throw error;
       return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: latest.id, accountId: latest.accountId!, status: 'PAID', paidAt: latest.paidAt?.toISOString() ?? null, amount: input.amount, replayed: true };
     }
-    return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: updated.id, accountId: updated.accountId, status: 'PAID', paidAt: updated.paidAt, amount: input.amount, replayed: updated.version === existingTransaction.version };
+    return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: updated.id, accountId: updated.accountId!, status: 'PAID', paidAt: updated.paidAt, amount: input.amount, replayed: updated.version === existingTransaction.version };
   }
   const created = await createTransactionV1(
     createTransactionV1Schema.parse({
@@ -600,5 +600,5 @@ export async function payRecurringOccurrenceV1(
     { recurringTransactionId: recurringId, occurrenceDate: paidDate },
   );
   const paidAt = await prisma.transaction.findUniqueOrThrow({ where: { id: created.id }, select: { paidAt: true } });
-  return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: created.id, accountId: created.accountId, status: 'PAID', paidAt: paidAt.paidAt?.toISOString() ?? null, amount: input.amount, replayed: false };
+  return { recurringTransactionId: recurringId, date: occurrenceDate, transactionId: created.id, accountId: created.accountId!, status: 'PAID', paidAt: paidAt.paidAt?.toISOString() ?? null, amount: input.amount, replayed: false };
 }
