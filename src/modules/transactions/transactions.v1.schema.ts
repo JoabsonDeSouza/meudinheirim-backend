@@ -12,7 +12,7 @@ const timeZoneSchema = z.string().min(1).max(64).refine((value) => {
   }
 }, 'timeZone must be a valid IANA time zone');
 
-export const transactionKindV1Schema = z.enum(['expense', 'income']);
+export const transactionKindV1Schema = z.enum(['expense', 'income', 'transfer']);
 
 export const transactionAmountV1Schema = moneyDtoSchema.refine(
   (money) => money.minorUnits > 0,
@@ -58,6 +58,7 @@ export const listTransactionsV1QuerySchema = paginationSchema.extend({
   occurredAfter: z.string().datetime().optional(),
   occurredBefore: z.string().datetime().optional(),
   installmentId: z.string().uuid().optional(),
+  includeTransfers: z.boolean().optional(),
 }).strict();
 
 export type ListTransactionsV1Query = z.infer<typeof listTransactionsV1QuerySchema>;
@@ -79,9 +80,12 @@ export const transactionV1DtoSchema = z.object({
   id: z.string().uuid(),
   kind: transactionKindV1Schema,
   amount: moneyDtoSchema,
-  categoryCode: categoryNameSchema,
-  accountId: z.string().uuid(),
+  categoryCode: categoryNameSchema.nullable().optional(),
+  accountId: z.string().uuid().nullable().optional(),
+  fromAccountId: z.string().uuid().nullable().optional(),
+  toAccountId: z.string().uuid().nullable().optional(),
   invoiceId: z.string().uuid().nullable(),
+  paymentId: z.string().uuid().nullable().optional(),
   occurredAt: z.string().datetime(),
   timeZone: timeZoneSchema,
   note: z.string().nullable(),

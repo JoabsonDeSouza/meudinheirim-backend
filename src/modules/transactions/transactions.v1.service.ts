@@ -22,14 +22,17 @@ export interface TransactionV1Page {
   };
 }
 
-function kindToPrismaType(kind: 'expense' | 'income'): TransactionType {
-  return kind === 'income' ? TransactionType.INCOME : TransactionType.EXPENSE;
+function kindToPrismaType(kind: 'expense' | 'income' | 'transfer'): TransactionType {
+  if (kind === 'income') return TransactionType.INCOME;
+  if (kind === 'expense') return TransactionType.EXPENSE;
+  return TransactionType.TRANSFER;
 }
 
-function prismaTypeToKind(type: TransactionType): 'expense' | 'income' {
+function prismaTypeToKind(type: TransactionType): 'expense' | 'income' | 'transfer' {
   if (type === TransactionType.INCOME) return 'income';
   if (type === TransactionType.EXPENSE) return 'expense';
-  throw new BadRequestError('Only income and expense transactions are supported by this endpoint');
+  if (type === TransactionType.TRANSFER) return 'transfer';
+  throw new BadRequestError('Only income, expense and transfer transactions are supported by this endpoint');
 }
 
 function validateCurrency(value: string): Currency {
@@ -125,7 +128,10 @@ function toDto(row: {
   currency: string;
   categoryName: string | null;
   accountId: string | null;
+  fromAccountId?: string | null;
+  toAccountId?: string | null;
   invoiceId: string | null;
+  paymentId?: string | null;
   occurredAt: Date;
   timeZone: string;
   notes: string | null;
@@ -141,15 +147,20 @@ function toDto(row: {
   totalInstallments: number | null;
   installmentTotalAmount: Prisma.Decimal | null;
 }): TransactionV1Dto {
-  if (!row.categoryName || !row.accountId) throw new BadRequestError('Transaction is missing account or category identity');
+  if (row.type !== TransactionType.TRANSFER && (!row.categoryName || !row.accountId)) {
+    throw new BadRequestError('Transaction is missing account or category identity');
+  }
   const currency = validateCurrency(row.currency);
   return {
     id: row.id,
     kind: prismaTypeToKind(row.type),
     amount: moneyDtoSchema.parse({ minorUnits: decimalToMinorUnits(row.amount, currency), currency }),
-    categoryCode: row.categoryName,
-    accountId: row.accountId,
+    categoryCode: row.categoryName ?? null,
+    accountId: row.accountId ?? null,
+    fromAccountId: row.fromAccountId ?? null,
+    toAccountId: row.toAccountId ?? null,
     invoiceId: row.invoiceId,
+    paymentId: row.paymentId ?? null,
     occurredAt: row.occurredAt.toISOString(),
     timeZone: row.timeZone,
     note: row.notes,
@@ -283,10 +294,16 @@ export async function createTransactionV1WithTx(
       },
     });
   }
-  if (input.paid) {
+  if (input.paid && input.kind !== 'transfer') {
     await applyBalanceChange(tx, account.id, balanceChange(amount, input.kind, account.type));
   }
-  const dto = toDto({ ...transaction, currency: money.currency });
+  const dto = toDto({
+    ...transaction,
+    currency: money.currency,
+    fromAccountId: transaction.fromAccountId ?? null,
+    toAccountId: transaction.toAccountId ?? null,
+    paymentId: undefined,
+  });
   await appendSyncChange(tx, {
     householdId,
     entityType: 'transaction',
@@ -306,7 +323,14 @@ export async function listTransactionsV1(query: ListTransactionsV1Query, househo
     // carry no category identity and would fail serialization with 400.
     // Without an explicit kind filter, default to income+expense so transfer
     // and allocation rows never reach toDto (nor the unfiltered listing).
-    ...(query.kind ? { type: kindToPrismaType(query.kind) } : { type: { in: [TransactionType.INCOME, TransactionType.EXPENSE] } }),
+    // When includeTransfers is set, TRANSFER rows are included as well.
+    ...(query.includeTransfers
+      ? query.kind
+        ? { type: kindToPrismaType(query.kind) }
+        : { type: { in: [TransactionType.INCOME, TransactionType.EXPENSE, TransactionType.TRANSFER] } }
+      : query.kind
+        ? { type: kindToPrismaType(query.kind) }
+        : { type: { in: [TransactionType.INCOME, TransactionType.EXPENSE] } }),
     ...(query.categoryCode ? { categoryName: query.categoryCode } : {}),
     ...(query.installmentId ? { installmentId: query.installmentId } : {}),
     ...((query.occurredAfter || query.occurredBefore) ? {
@@ -322,14 +346,24 @@ export async function listTransactionsV1(query: ListTransactionsV1Query, househo
       where,
       ...pageArgs,
       orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
-      include: { account: { select: { currency: true } } },
+      include: {
+        account: { select: { currency: true } },
+        fromAccount: { select: { id: true, name: true } },
+        toAccount: { select: { id: true, name: true } },
+      },
     }),
     prisma.transaction.count({ where }),
   ]);
   const page = createPaginatedResponse(rows, query.limit, total);
   const items = page.data.map((row) => {
     if (!row.account) throw new BadRequestError('Transaction account is unavailable');
-    return toDto({ ...row, currency: row.account.currency });
+    return toDto({
+      ...row,
+      currency: row.account.currency,
+      fromAccountId: row.fromAccountId,
+      toAccountId: row.toAccountId,
+      paymentId: (row as unknown as { paymentId?: string | null }).paymentId,
+    });
   });
   return {
     items,
@@ -421,10 +455,10 @@ export async function updateTransactionV1(
       });
     }
 
-    if (existing.paid) {
+    if (existing.paid && kind !== 'transfer') {
       await applyBalanceChange(tx, existing.account.id, balanceChange(existing.amount, kind, existing.account.type).negated());
     }
-    if (nextPaid) {
+    if (nextPaid && kind !== 'transfer') {
       await applyBalanceChange(tx, nextAccount.id, balanceChange(nextAmount, kind, nextAccount.type));
     }
 
@@ -451,7 +485,13 @@ export async function updateTransactionV1(
       include: { account: { select: { currency: true } } },
     });
     if (!updated?.account) throw new NotFoundError('Transaction');
-    const dto = transactionV1DtoSchema.parse(toDto({ ...updated, currency: updated.account.currency }));
+    const dto = transactionV1DtoSchema.parse(toDto({
+      ...updated,
+      currency: updated.account.currency,
+      fromAccountId: updated.fromAccountId ?? null,
+      toAccountId: updated.toAccountId ?? null,
+      paymentId: undefined,
+    }));
     await saveMutationReceipt(tx, identity, 'transaction', updated.id, dto);
     await appendSyncChange(tx, {
       householdId,
@@ -498,7 +538,9 @@ export async function softDeleteTransactionV1WithTx(
     await lockInvoiceLifecycle(tx, [existing.invoiceId]);
     if (existing.paid) {
       const kind = prismaTypeToKind(existing.type);
-      await applyBalanceChange(tx, existing.account.id, balanceChange(existing.amount, kind, existing.account.type).negated());
+      if (kind !== 'transfer') {
+        await applyBalanceChange(tx, existing.account.id, balanceChange(existing.amount, kind, existing.account.type).negated());
+      }
     }
     if (existing.invoiceId) {
       const invoice = await tx.creditCardInvoice.findUnique({
@@ -524,7 +566,13 @@ export async function softDeleteTransactionV1WithTx(
       include: { account: { select: { currency: true } } },
     });
     if (!deleted?.account) throw new NotFoundError('Transaction');
-    const dto = transactionV1DtoSchema.parse(toDto({ ...deleted, currency: deleted.account.currency }));
+    const dto = transactionV1DtoSchema.parse(toDto({
+      ...deleted,
+      currency: deleted.account.currency,
+      fromAccountId: deleted.fromAccountId ?? null,
+      toAccountId: deleted.toAccountId ?? null,
+      paymentId: undefined,
+    }));
     await saveMutationReceipt(tx, identity, 'transaction', deleted.id, dto);
     await appendSyncChange(tx, {
       householdId,
@@ -807,8 +855,8 @@ export async function softDeleteInstallmentGroupV1WithTx(
     (left.accountId.localeCompare(right.accountId)) || left.id.localeCompare(right.id));
   const deletedAt = new Date();
   for (const item of deletableItems) {
-    if (item.paid) {
-      await applyBalanceChange(tx, item.accountId, balanceChange(item.amount, prismaTypeToKind(item.type), item.accountType).negated());
+    if (item.paid && item.type !== TransactionType.TRANSFER) {
+      await applyBalanceChange(tx, item.accountId, balanceChange(item.amount, prismaTypeToKind(item.type) as 'expense' | 'income', item.accountType).negated());
     }
   }
   for (const item of [...items].sort((left, right) =>
@@ -837,7 +885,13 @@ export async function softDeleteInstallmentGroupV1WithTx(
   });
   const dtoItems = deletedRows.map((row) => {
     if (!row?.account) throw new NotFoundError('Transaction');
-    return transactionV1DtoSchema.parse(toDto({ ...row, currency: row.account.currency }));
+    return transactionV1DtoSchema.parse(toDto({
+      ...row,
+      currency: row.account.currency,
+      fromAccountId: row.fromAccountId ?? null,
+      toAccountId: row.toAccountId ?? null,
+      paymentId: undefined,
+    }));
   });
 
   const response = installmentGroupDeleteV1ResponseSchema.parse({
