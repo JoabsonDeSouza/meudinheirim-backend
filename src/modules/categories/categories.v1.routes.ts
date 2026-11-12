@@ -10,7 +10,7 @@ import {
 } from '../../shared/middleware/authorization.middleware.js';
 import { toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import { NotFoundError, InsufficientRoleError } from '../../shared/errors/index.js';
-import { listCategoriesQuerySchema, createCategorySchema, categoryIdParamSchema, getSystemCategoryCodes } from './categories.schema.js';
+import { listCategoriesQuerySchema, createCategorySchema, categoryIdParamSchema, descriptionSuggestionsQuerySchema, getSystemCategoryCodes } from './categories.schema.js';
 import * as categoriesService from './categories.service.js';
 
 export async function categoryV1Routes(app: FastifyInstance): Promise<void> {
@@ -84,6 +84,54 @@ export async function categoryV1Routes(app: FastifyInstance): Promise<void> {
     }));
 
     return reply.send({ items: [...system, ...customDtos] });
+  });
+
+  app.get('/description-suggestions', {
+    schema: {
+      description: 'Get description suggestions derived from user transaction history.',
+      tags: ['Categories'],
+      security: [{ bearerAuth: [] }],
+      querystring: {
+        type: 'object',
+        properties: {
+          householdId: { type: 'string', format: 'uuid' },
+          q: { type: 'string', minLength: 2, maxLength: 100 },
+          limit: { type: 'number', minimum: 1, maximum: 20, default: 5 },
+        },
+        required: ['q'],
+      },
+      response: {
+        200: {
+          type: 'object',
+          required: ['items'],
+          properties: {
+            items: {
+              type: 'array',
+              items: {
+                type: 'object',
+                required: ['description', 'count', 'lastUsed'],
+                properties: {
+                  description: { type: 'string' },
+                  categoryName: { type: ['string', 'null'] },
+                  accountId: { type: ['string', 'null'], format: 'uuid' },
+                  accountName: { type: ['string', 'null'] },
+                  count: { type: 'number' },
+                  lastUsed: { type: 'string', format: 'date-time' },
+                  lastAmount: { type: ['number', 'null'] },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const query = descriptionSuggestionsQuerySchema.parse(request.query);
+    const householdId = query.householdId ?? await ensurePersonalHousehold(request);
+    await requireHouseholdMember(request, householdId);
+    const suggestions = await categoriesService.getDescriptionSuggestions(query);
+    return reply.send({ items: suggestions });
   });
 
   app.post('/custom', {

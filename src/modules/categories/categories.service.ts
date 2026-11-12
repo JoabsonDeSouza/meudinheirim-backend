@@ -5,8 +5,10 @@ import { NotFoundError, ConflictError, CategoryInUseError } from '../../shared/e
 import { toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import type {
   CreateCategoryInput,
-  UpdateCategoryInput,
+  DescriptionSuggestionDto,
+  DescriptionSuggestionsQuery,
   ListCategoriesQuery,
+  UpdateCategoryInput,
 } from './categories.schema.js';
 
 /**
@@ -76,6 +78,48 @@ export async function listCategories(query: ListCategoriesQuery): Promise<{ id: 
   });
 
   return categories;
+}
+
+/**
+ * Get description suggestions derived from the user's transaction history.
+ * Groups by description + category + account, ordered by count desc then lastUsed desc.
+ */
+export async function getDescriptionSuggestions(query: DescriptionSuggestionsQuery): Promise<DescriptionSuggestionDto[]> {
+  const { householdId, q, limit } = query;
+
+  const rows = await prisma.transaction.groupBy({
+    by: ['description', 'categoryName', 'accountId'],
+    where: {
+      householdId,
+      deletedAt: null,
+      description: { contains: q, mode: 'insensitive' },
+    },
+    _count: { description: true },
+    _max: { occurredAt: true },
+    _avg: { amount: true },
+    orderBy: [{ _count: { description: 'desc' } }, { _max: { occurredAt: 'desc' } }],
+    take: limit,
+  });
+
+  const accountIds = [...new Set(rows.map((r) => r.accountId).filter((id): id is string => id !== null))];
+
+  const accounts = accountIds.length > 0
+    ? await prisma.account.findMany({
+        where: { id: { in: accountIds } },
+        select: { id: true, name: true },
+      })
+    : [];
+  const accountMap = new Map(accounts.map((a) => [a.id, a.name]));
+
+  return rows.map((row) => ({
+    description: row.description!,
+    categoryName: row.categoryName ?? null,
+    accountId: row.accountId ?? null,
+    accountName: row.accountId ? accountMap.get(row.accountId) ?? null : null,
+    count: row._count.description,
+    lastUsed: row._max.occurredAt!.toISOString(),
+    lastAmount: row._avg.amount ? Number(row._avg.amount) : null,
+  }));
 }
 
 /** Archive a custom category while retaining its stable id for historical references. */

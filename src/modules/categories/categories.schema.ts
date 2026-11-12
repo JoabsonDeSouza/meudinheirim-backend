@@ -74,3 +74,23 @@ export const listCategoriesQuerySchema = z.object({
   type: categoryTypeEnum.optional(),
 }).strict();
 export type ListCategoriesQuery = z.infer<typeof listCategoriesQuerySchema>;
+
+/**
+ * Description suggestions: householdId (optional, defaults to personal), q (search term, min 2), limit (max 20)
+ */
+export const descriptionSuggestionsQuerySchema = z.object({
+  householdId: z.string().uuid().optional(),
+  q: z.string().min(2, 'Search term must be at least 2 characters').max(100),
+  limit: z.coerce.number().min(1).max(20).default(5),
+}).strict();
+export type DescriptionSuggestionsQuery = z.infer<typeof descriptionSuggestionsQuerySchema>;
+
+export interface DescriptionSuggestionDto {
+  readonly description: string;
+  readonly categoryName: string | null;
+  readonly accountId: string | null;
+  readonly accountName: string | null;
+  readonly count: number;
+  readonly lastUsed: string;
+  readonly lastAmount: number | null;
+}
