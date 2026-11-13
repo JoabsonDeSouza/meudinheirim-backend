@@ -362,7 +362,8 @@ export async function listTransactionsV1(query: ListTransactionsV1Query, househo
       currency: row.account.currency,
       fromAccountId: row.fromAccountId,
       toAccountId: row.toAccountId,
-      paymentId: (row as unknown as { paymentId?: string | null }).paymentId,
+      // Transaction has no paymentId column; the payment link lives on InvoicePayment. Output stays null as before.
+      paymentId: null,
     });
   });
   return {
