@@ -77,31 +77,73 @@ export async function getSavingsGoal(goalId: string): Promise<{ targetAmount: nu
 /**
  * List savings goals for a household
  */
-export async function listSavingsGoals(query: ListSavingsGoalsQuery): Promise<{ targetAmount: number; currentAmount: number; remaining: number; percentage: number; isCompleted: boolean; id: string; name: string; targetDate: Date | null; accountId: string | null; householdId: string; createdAt: Date; updatedAt: Date; }[]> {
+export interface SavingsGoalListItem {
+  readonly id: string;
+  readonly name: string;
+  readonly targetAmount: number;
+  readonly currentAmount: number;
+  readonly remaining: number;
+  readonly percentage: number;
+  readonly isCompleted: boolean;
+  readonly currency: 'BRL' | 'USD';
+  readonly monthsElapsed: number;
+  readonly monthlyPace: number;
+  readonly estimatedMonthsRemaining: number | null;
+  readonly targetDate: Date | null;
+  readonly accountId: string | null;
+  readonly householdId: string;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
+/**
+ * Whole calendar months between creation and now, never less than 1.
+ * Approximation: there is no contribution history yet, so pace = currentAmount / months.
+ */
+function monthsSince(createdAt: Date, now: Date): number {
+  const yearsInMonths = (now.getUTCFullYear() - createdAt.getUTCFullYear()) * 12;
+  const months = yearsInMonths + (now.getUTCMonth() - createdAt.getUTCMonth());
+  return Math.max(1, months);
+}
+
+/**
+ * List savings goals for a household.
+ * Currency is derived from the linked account; goals without an account default to BRL.
+ * monthlyPace and estimatedMonthsRemaining are estimates from the average since creation.
+ */
+export async function listSavingsGoals(query: ListSavingsGoalsQuery): Promise<SavingsGoalListItem[]> {
   const { householdId } = query;
 
   const goals = await prisma.savingsGoal.findMany({
     where: { householdId },
+    include: { account: { select: { currency: true } } },
     orderBy: [
       { createdAt: 'desc' },
     ],
   });
 
-  // Calculate progress for each goal and convert Prisma.Decimal to number for JSON serialization
-  return goals.map((goal: { targetAmount: Prisma.Decimal; currentAmount: Prisma.Decimal; id: string; name: string; targetDate: Date | null; accountId: string | null; householdId: string; createdAt: Date; updatedAt: Date }) => {
+  const now = new Date();
+  return goals.map((goal) => {
+    const { account, ...row } = goal;
     const target = goal.targetAmount.toNumber();
     const current = goal.currentAmount.toNumber();
     const percentage = target > 0 ? (current / target) * 100 : 0;
     const remaining = target - current;
-    const isCompleted = current >= target;
+    const monthsElapsed = monthsSince(goal.createdAt, now);
+    const monthlyPace = current / monthsElapsed;
+    const currency: 'BRL' | 'USD' = account?.currency === 'USD' ? 'USD' : 'BRL';
 
     return {
-      ...goal,
+      ...row,
       targetAmount: target,
       currentAmount: current,
       remaining,
       percentage: Math.round(percentage * 100) / 100,
-      isCompleted,
+      isCompleted: current >= target,
+      currency,
+      monthsElapsed,
+      monthlyPace: Math.round(monthlyPace * 100) / 100,
+      estimatedMonthsRemaining: monthlyPace > 0 ? Math.round((remaining / monthlyPace) * 10) / 10 : null,
     };
   });
 }
