@@ -146,4 +146,12 @@ describe('versioned OpenAPI contract', () => {
     const document = app.swagger() as OpenApiDocument;
     expect(document.paths['/v1/categories/{categoryId}/archive']?.post).toBeDefined();
   });
+
+  it('documents shortcut device-token management and the shortcut transaction endpoint', () => {
+    const document = app.swagger() as OpenApiDocument;
+    expect(document.paths['/v1/shortcut-tokens/']?.post ?? document.paths['/v1/shortcut-tokens']?.post).toBeDefined();
+    expect(document.paths['/v1/shortcut-tokens/']?.get ?? document.paths['/v1/shortcut-tokens']?.get).toBeDefined();
+    expect(document.paths['/v1/shortcut-tokens/{tokenId}']?.delete).toBeDefined();
+    expect(document.paths['/v1/shortcut/transactions']?.post).toBeDefined();
+  });
 });

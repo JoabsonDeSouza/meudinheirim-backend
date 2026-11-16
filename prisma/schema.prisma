@@ -45,6 +45,7 @@ model User {
   notifications            Notification[]
   transactionSplits        TransactionSplit[]
   syncMutations            SyncMutation[]
+  shortcutTokens           ShortcutToken[]
 
   @@map("users")
 }
@@ -75,6 +76,7 @@ model Household {
   creditCardInvoices    CreditCardInvoice[]
   savingsGoals          SavingsGoal[]
   recurringTransactions RecurringTransaction[]
+  shortcutTokens        ShortcutToken[]
 
   @@map("households")
 }
@@ -696,4 +698,40 @@ model Notification {
   @@index([type])
   @@index([createdAt])
   @@map("notifications")
+}
+
+/// Device token that lets a Shortcuts/Wallet automation create expenses without Firebase login.
+/// Only the SHA-256 of the token is stored; the raw token is shown once at creation.
+model ShortcutToken {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  householdId    String    @map("household_id") @db.Uuid
+  deviceName     String    @map("device_name") @db.VarChar(60)
+  tokenHash      String    @unique @map("token_hash") @db.VarChar(64)
+  scopes         String[]  @default(["transactions:create"])
+  maxAmountMinor Int       @map("max_amount_minor")
+  lastUsedAt     DateTime? @map("last_used_at") @db.Timestamptz(3)
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(3)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  household Household           @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  events    ShortcutTokenEvent[]
+
+  @@index([userId, revokedAt])
+  @@map("shortcut_tokens")
+}
+
+/// Audit trail for shortcut tokens: created, revoked, used, rejected.
+model ShortcutTokenEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  tokenId   String   @map("token_id") @db.Uuid
+  action    String   @db.VarChar(16)
+  outcome   String   @db.VarChar(32)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  token ShortcutToken @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+
+  @@index([tokenId, createdAt])
+  @@map("shortcut_token_events")
 }
