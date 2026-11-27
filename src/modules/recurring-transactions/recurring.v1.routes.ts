@@ -196,9 +196,16 @@ export async function recurringV1Routes(app: FastifyInstance): Promise<void> {
       body: { type: 'object', required: ['scope'], additionalProperties: false, properties: {
         householdId: { type: 'string', format: 'uuid' }, scope: { type: 'string', enum: ['CURRENT_ONLY', 'CURRENT_AND_FUTURE', 'FUTURE_ONLY'] },
       } },
-      response: { 200: { type: 'object', required: ['recurringTransactionId', 'date', 'scope', 'replayed'], additionalProperties: false, properties: {
+      response: { 200: { type: 'object', required: ['recurringTransactionId', 'date', 'scope', 'replayed', 'reversedPayment'], additionalProperties: false, properties: {
         recurringTransactionId: { type: 'string', format: 'uuid' }, date: { type: 'string', format: 'date' },
         scope: { type: 'string', enum: ['CURRENT_ONLY', 'CURRENT_AND_FUTURE', 'FUTURE_ONLY'] }, replayed: { type: 'boolean' },
+        reversedPayment: { type: ['object', 'null'], required: ['transactionId', 'accountId', 'amount', 'balanceRestored'], additionalProperties: false, properties: {
+          transactionId: { type: 'string', format: 'uuid' }, accountId: { type: 'string', format: 'uuid' },
+          amount: { type: 'object', required: ['minorUnits', 'currency'], additionalProperties: false, properties: {
+            minorUnits: { type: 'integer' }, currency: { type: 'string', enum: ['BRL', 'USD'] },
+          } },
+          balanceRestored: { type: 'boolean', const: true },
+        } },
       } } },
     },
   }, async (request, reply) => {
