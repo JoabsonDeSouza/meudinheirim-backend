@@ -28,7 +28,7 @@ export async function accountRoutes(app: FastifyInstance): Promise<void> {
    */
   app.get('/', {
     schema: {
-      description: 'List accounts for a household',
+      description: 'List accounts for a household. totals = bank balance per currency (active non-CREDIT accounts); cards keep their own balance in accounts',
       tags: ['Accounts'],
       security: [{ bearerAuth: [] }],
       querystring: {
