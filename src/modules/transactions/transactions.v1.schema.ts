@@ -50,12 +50,8 @@ export const updateTransactionV1Schema = z.object({
   timeZone: timeZoneSchema.optional(),
   note: z.string().max(1000).nullable().optional(),
   paid: z.boolean().optional(),
-  invoiceId: z.string().uuid().nullable().optional(),
-  billingPeriodStart: billingPeriodStartSchema.optional(),
 }).strict().refine((value) => Object.keys(value).some((key) => !['clientMutationId', 'expectedVersion'].includes(key)), {
   message: 'At least one transaction field must be provided',
-}).refine((value) => !(value.invoiceId && value.billingPeriodStart), {
-  message: 'Send either invoiceId or billingPeriodStart, not both',
 });
 
 export type UpdateTransactionV1Input = z.infer<typeof updateTransactionV1Schema>;

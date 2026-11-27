@@ -280,59 +280,74 @@ describe('manual invoice selection on card charges', () => {
     expect(localNoon.json().invoicePeriod).toMatchObject({ periodStart: '2026-11-15', periodEnd: '2026-12-15' });
   });
 
-  it('PATCH moves an explicit choice, keeps it on amount-only edits, refuses leaving a PAID invoice, and returns to automatic on null', async () => {
+  it('PATCH keeps an explicit invoice on amount-only edits, and refuses leaving a PAID invoice', async () => {
     const window = await cycles();
-    const cardId = await createCard('Selection patch card');
-    const first = await createInvoice(cardId, window[1]!, 'OPEN');
-    const second = await createInvoice(cardId, window[2]!, 'OPEN');
-    const created = await postCharge(cardId, { invoiceId: first, clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000011' });
+    const cardId = await createCard('Selection patch keep card');
+    const target = await createInvoice(cardId, window[1]!, 'OPEN');
+    const created = await postCharge(cardId, { invoiceId: target, clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000011' });
     expect(created.statusCode).toBe(201);
     const id = created.json().id as string;
-    let version = created.json().version as number;
 
     const amountOnly = await app.inject({
       method: 'PATCH',
       url: `/v1/transactions/${id}?householdId=${householdId}`,
       headers: auth,
-      payload: { clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000012', expectedVersion: version, amount: { minorUnits: 8000, currency: 'BRL' } },
+      payload: { clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000012', expectedVersion: created.json().version, amount: { minorUnits: 8000, currency: 'BRL' } },
     });
     expect(amountOnly.statusCode).toBe(200);
-    version = amountOnly.json().version as number;
-    expect(await invoiceTotal(first)).toBe('80.00');
+    expect(amountOnly.json().invoiceId).toBe(target);
+    expect(await invoiceTotal(target)).toBe('80.00');
 
-    const moved = await app.inject({
+    await prisma.creditCardInvoice.update({ where: { id: target }, data: { status: 'PAID', paidAt: new Date() } });
+    const refused = await app.inject({
       method: 'PATCH',
       url: `/v1/transactions/${id}?householdId=${householdId}`,
       headers: auth,
-      payload: { clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000013', expectedVersion: version, invoiceId: second },
+      payload: { clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000013', expectedVersion: amountOnly.json().version, amount: { minorUnits: 9000, currency: 'BRL' } },
     });
-    expect(moved.statusCode).toBe(200);
-    version = moved.json().version as number;
-    expect(moved.json().invoiceId).toBe(second);
-    expect(await invoiceTotal(first)).toBe('0.00');
-    expect(await invoiceTotal(second)).toBe('80.00');
+    expect(refused.statusCode).toBe(400);
+    expect(refused.json().error.code).toBe('INVOICE_PAID');
+    expect(await invoiceTotal(target)).toBe('80.00');
+  });
 
-    const backToAutomatic = await app.inject({
+  it('PATCH does not accept invoice selection: the choice is made on create only', async () => {
+    const window = await cycles();
+    const cardId = await createCard('Selection patch rejects card');
+    const target = await createInvoice(cardId, window[1]!, 'OPEN');
+    const created = await postCharge(cardId, { clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000016' });
+    const response = await app.inject({
       method: 'PATCH',
-      url: `/v1/transactions/${id}?householdId=${householdId}`,
+      url: `/v1/transactions/${created.json().id as string}?householdId=${householdId}`,
       headers: auth,
-      payload: { clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000014', expectedVersion: version, invoiceId: null, occurredAt: noonOf(window[1]!.periodStart) },
+      payload: { clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000017', expectedVersion: created.json().version, invoiceId: target },
     });
-    expect(backToAutomatic.statusCode).toBe(200);
-    expect(backToAutomatic.json().invoicePeriod).toMatchObject({ periodStart: window[1]!.periodStart });
-    expect(await invoiceTotal(second)).toBe('0.00');
-    expect(await invoiceTotal(backToAutomatic.json().invoiceId as string)).toBe('80.00');
-    version = backToAutomatic.json().version as number;
+    expect(response.statusCode).toBe(400);
+    expect(await invoiceTotal(target)).toBe('0.00');
+  });
 
-    await prisma.creditCardInvoice.update({ where: { id: backToAutomatic.json().invoiceId as string }, data: { status: 'PAID', paidAt: new Date() } });
-    const leavingPaid = await app.inject({
-      method: 'PATCH',
-      url: `/v1/transactions/${id}?householdId=${householdId}`,
-      headers: auth,
-      payload: { clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000015', expectedVersion: version, invoiceId: second },
+  it('PATCH with a new date re-routes the charge by its date, and existing invoices keep their due date', async () => {
+    const cardId = await createCard('Selection reroute card');
+    const march = await createInvoice(cardId, { periodStart: '2027-02-15', periodEnd: '2027-03-15', dueDate: '2027-03-20' }, 'OPEN');
+    const created = await postCharge(cardId, {
+      occurredAt: '2027-02-20T15:00:00.000Z',
+      clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000018',
     });
-    expect(leavingPaid.statusCode).toBe(400);
-    expect(leavingPaid.json().error.code).toBe('INVOICE_PAID');
+    expect(created.statusCode).toBe(201);
+    expect(created.json().invoiceId).toBe(march);
+
+    await prisma.account.update({ where: { id: cardId }, data: { dueDay: 25 } });
+    const rerouted = await app.inject({
+      method: 'PATCH',
+      url: `/v1/transactions/${created.json().id as string}?householdId=${householdId}`,
+      headers: auth,
+      payload: { clientMutationId: '6a1b2c3d-4e5f-4061-8273-000000000019', expectedVersion: created.json().version, occurredAt: '2027-03-20T15:00:00.000Z' },
+    });
+    expect(rerouted.statusCode).toBe(200);
+    expect(rerouted.json().invoicePeriod).toMatchObject({ periodStart: '2027-03-15', periodEnd: '2027-04-15' });
+    expect(await invoiceTotal(march)).toBe('0.00');
+
+    const existingMarch = await prisma.creditCardInvoice.findUniqueOrThrow({ where: { id: march } });
+    expect(existingMarch.dueDate.toISOString().slice(0, 10)).toBe('2027-03-20');
   });
 
   it('lists OPEN and CLOSED unpaid invoices, hides PAID, adds not-created cycles, and reports the automatic invoice', async () => {

@@ -87,9 +87,8 @@ export async function getOrCreateInvoiceForTransaction(
       currency: input.currency,
       totalAmount: amountChange,
     },
+    // Existing invoices keep the period and due date they were created with; only the total moves.
     update: {
-      periodEnd,
-      dueDate,
       totalAmount: { increment: amountChange },
     },
     select: { id: true },

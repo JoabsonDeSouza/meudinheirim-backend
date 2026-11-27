@@ -336,8 +336,6 @@ export async function transactionV1Routes(app: FastifyInstance): Promise<void> {
           timeZone: { type: 'string', maxLength: 64 },
           note: { type: ['string', 'null'], maxLength: 1000 },
           paid: { type: 'boolean' },
-          invoiceId: { type: ['string', 'null'], format: 'uuid', description: 'Card only: explicit invoice; null returns to the automatic cycle rule' },
-          billingPeriodStart: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$', description: 'Card only: start of the current or one of the next 3 cycles without an invoice row' },
         },
         additionalProperties: false,
       },

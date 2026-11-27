@@ -8,7 +8,7 @@ import { minorUnitsToDecimal, decimalToMinorUnits, moneyDtoSchema, type Currency
 import { createPaginatedResponse, buildPaginationArgs } from '../../shared/utils/pagination.js';
 import { isCustomCategoryName, toCustomCategoryId, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import { prisma } from '../../shared/db/prisma.js';
-import { adjustInvoiceTotal, lockInvoiceForSelection, resolveInvoiceForCharge, signedInvoiceAmount, type InvoiceSelection } from '../credit-cards/domain/invoice-cycle.js';
+import { adjustInvoiceTotal, getOrCreateInvoiceForTransaction, lockInvoiceForSelection, resolveInvoiceForCharge, signedInvoiceAmount, type InvoiceSelection } from '../credit-cards/domain/invoice-cycle.js';
 import { civilDateStringAtInstant } from '../credit-cards/domain/billing-cycle.js';
 import { appendSyncChange, findMutationReplay, payloadHash, saveMutationReceipt } from '../../shared/sync/idempotency.js';
 import { transactionV1DtoSchema, installmentGroupDeleteV1ResponseSchema, installmentGroupSummaryV1Schema, type CreateTransactionV1Input, type InstallmentGroupDeleteV1Response, type InstallmentGroupSummaryV1, type ListTransactionsV1Query, type TransactionV1Dto, type UpdateTransactionV1Input } from './transactions.v1.schema.js';
@@ -450,14 +450,8 @@ export async function updateTransactionV1(
     }
     const invoiceIdsToLock: Array<string | null> = [existing.invoiceId];
     const nextOccurredAt = input.occurredAt ? new Date(input.occurredAt) : existing.occurredAt;
-    const invoiceChoiceRequested = input.invoiceId !== undefined || input.billingPeriodStart !== undefined;
-    if (invoiceChoiceRequested && existing.account.type !== AccountType.CREDIT) {
-      throw new BadRequestError('Invoice selection is only valid for credit card transactions');
-    }
-    // A card charge keeps its invoice when only the amount/category/note/paid change; a new date or time zone re-routes it.
-    const keepInvoice = existing.account.type === AccountType.CREDIT
-      && !invoiceChoiceRequested && input.occurredAt === undefined && input.timeZone === undefined;
-    const selection = invoiceSelectionFrom(input);
+    // A card charge keeps its invoice when only the amount/category/note/paid change; a new date or time zone re-routes it by date.
+    const keepInvoice = existing.account.type === AccountType.CREDIT && input.occurredAt === undefined && input.timeZone === undefined;
     if (existing.account.type === AccountType.CREDIT && !keepInvoice) {
       invoiceIdsToLock.push(await lockInvoiceForSelection(tx, {
         cardAccountId: existing.account.id,
@@ -465,7 +459,7 @@ export async function updateTransactionV1(
         dueDay: existing.account.dueDay,
         occurredAt: nextOccurredAt,
         timeZone: input.timeZone ?? existing.timeZone,
-        selection,
+        selection: null,
       }));
     }
     await lockInvoiceLifecycle(tx, invoiceIdsToLock);
@@ -506,7 +500,7 @@ export async function updateTransactionV1(
         nextInvoiceId = existing.invoiceId;
         await adjustInvoiceTotal(tx, existing.invoiceId, signedInvoiceAmount(nextAmount, kind === 'income' ? 'INCOME' : 'EXPENSE'));
       } else {
-        nextInvoiceId = await resolveInvoiceForCharge(tx, {
+        nextInvoiceId = await getOrCreateInvoiceForTransaction(tx, {
           householdId,
           cardAccountId: existing.account.id,
           currency,
@@ -516,7 +510,7 @@ export async function updateTransactionV1(
           timeZone: input.timeZone ?? existing.timeZone,
           amount: nextAmount,
           transactionType: kind === 'income' ? 'INCOME' : 'EXPENSE',
-        }, selection);
+        });
       }
     }
 
