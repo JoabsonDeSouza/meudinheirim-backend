@@ -5,10 +5,19 @@ import { ensurePersonalHousehold, getUserByFirebaseUid, requireEditor, requireHo
 import { closeInvoiceSchema, invoiceIdParamsSchema, payInvoiceV1Schema, refundInvoiceV1Schema } from './invoice-lifecycle.schema.js';
 import { closeInvoiceV1, payInvoiceV1, refundInvoiceV1 } from './application/invoice-lifecycle.service.js';
 import { listCreditCardInvoicesV1 } from './invoices.v1.service.js';
+import { listEligibleInvoicesV1 } from './eligible-invoices.v1.service.js';
+import { timeZoneSchema } from '../transactions/transactions.v1.schema.js';
 
 const invoiceListQuerySchema = z.object({
   householdId: z.string().uuid().optional(),
   cardAccountId: z.string().uuid().optional(),
+}).strict();
+
+const eligibleInvoicesQuerySchema = z.object({
+  householdId: z.string().uuid().optional(),
+  cardAccountId: z.string().uuid(),
+  timeZone: timeZoneSchema,
+  occurredAt: z.string().datetime().optional(),
 }).strict();
 
 export async function creditCardInvoiceV1Routes(app: FastifyInstance): Promise<void> {
@@ -120,5 +129,34 @@ export async function creditCardInvoiceV1Routes(app: FastifyInstance): Promise<v
     const householdId = query.householdId ?? await ensurePersonalHousehold(request);
     await requireHouseholdMember(request, householdId);
     return reply.send({ items: await listCreditCardInvoicesV1(householdId, query.cardAccountId) });
+  });
+  app.get('/eligible-invoices', {
+    schema: {
+      description: 'Invoices a card charge may use: OPEN and CLOSED unpaid (latest 12), plus the current and next 3 cycles (NOT_CREATED when no row yet). occurredAt adds the automatic invoice for that date, PAID included.',
+      tags: ['Credit Cards'],
+      security: [{ bearerAuth: [] }],
+      querystring: {
+        type: 'object',
+        required: ['cardAccountId', 'timeZone'],
+        properties: {
+          householdId: { type: 'string', format: 'uuid' },
+          cardAccountId: { type: 'string', format: 'uuid' },
+          timeZone: { type: 'string', minLength: 1, maxLength: 64 },
+          occurredAt: { type: 'string', format: 'date-time' },
+        },
+        additionalProperties: false,
+      },
+      response: { 200: { type: 'object', additionalProperties: true } },
+    },
+  }, async (request, reply) => {
+    const query = eligibleInvoicesQuerySchema.parse(request.query);
+    const householdId = query.householdId ?? await ensurePersonalHousehold(request);
+    await requireHouseholdMember(request, householdId);
+    return reply.send(await listEligibleInvoicesV1({
+      householdId,
+      cardAccountId: query.cardAccountId,
+      timeZone: query.timeZone,
+      ...(query.occurredAt === undefined ? {} : { occurredAt: query.occurredAt }),
+    }));
   });
 }
