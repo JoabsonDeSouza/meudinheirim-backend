@@ -136,7 +136,7 @@ export class OccurrenceAccountConflictError extends AppError {
 
 export class RecurringOccurrencePaidError extends AppError {
   constructor() {
-    super('A paid occurrence cannot be excluded; reverse the transaction separately', 409, 'RECURRING_OCCURRENCE_PAID');
+    super('A paid occurrence cannot be excluded with this scope; exclude only the current occurrence (CURRENT_ONLY) to reverse it', 409, 'RECURRING_OCCURRENCE_PAID');
   }
 }
 

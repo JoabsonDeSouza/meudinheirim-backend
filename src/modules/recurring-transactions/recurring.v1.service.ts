@@ -387,12 +387,15 @@ export async function excludeRecurringOccurrenceV1(
       where: { recurringTransactionId: recurringId, occurrenceDate: scope === 'CURRENT_ONLY' ? selectedDate : { gte: firstAffectedDate } },
       include: { transaction: true },
     });
-    if (scope !== 'FUTURE_ONLY' && materialized.some((item) => item.occurrenceDate.getTime() === selectedDate.getTime() && item.transaction.paid && !item.transaction.deletedAt)) {
+    // CURRENT_ONLY on a paid occurrence reverses its linked transaction atomically (balance/invoice restored via the
+    // transaction soft-delete guards). Wider scopes still refuse, so paid history of a series is never reversed implicitly.
+    if (scope === 'CURRENT_AND_FUTURE' && materialized.some((item) => item.occurrenceDate.getTime() === selectedDate.getTime() && item.transaction.paid && !item.transaction.deletedAt)) {
       throw new RecurringOccurrencePaidError();
     }
     let changed = false;
     for (const item of materialized) {
-      if (item.transaction.paid || item.transaction.deletedAt) continue;
+      if (item.transaction.deletedAt) continue;
+      if (item.transaction.paid && scope !== 'CURRENT_ONLY') continue;
       await softDeleteTransactionV1WithTx(tx, item.transactionId, householdId, userId, randomUUID(), item.transaction.version);
       changed = true;
     }

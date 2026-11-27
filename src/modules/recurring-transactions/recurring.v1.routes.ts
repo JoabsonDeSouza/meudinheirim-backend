@@ -188,7 +188,7 @@ export async function recurringV1Routes(app: FastifyInstance): Promise<void> {
 
   app.post('/:recurringId/occurrences/:occurrenceDate/exclude', {
     schema: {
-      description: 'Exclude one unpaid occurrence, this and future unpaid occurrences, or only future unpaid occurrences; paid history is preserved',
+      description: 'Exclude one occurrence. CURRENT_ONLY on a paid occurrence reverses its transaction atomically (account balance restored). CURRENT_AND_FUTURE on a paid current occurrence and FUTURE_ONLY leave paid history untouched and never reverse it.',
       tags: ['Recurring Transactions'], security: [{ bearerAuth: [] }],
       params: { type: 'object', required: ['recurringId', 'occurrenceDate'], additionalProperties: false, properties: {
         recurringId: { type: 'string', format: 'uuid' }, occurrenceDate: { type: 'string', format: 'date' },

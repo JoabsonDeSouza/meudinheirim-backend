@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
+import type { LightMyRequestResponse } from 'fastify';
 import { Prisma, type PrismaClient } from '../../src/generated/prisma/client.js';
 
 import { disposeBootstrapTestDb, getBootstrapTestDb } from '../helpers/db-context.js';
@@ -103,5 +104,124 @@ describe('recurring occurrence payment and reversal', () => {
     expect(secondPayment.json().transactionId).not.toBe(firstTransactionId);
     expect(await balanceOf(accountId)).toBe('92.75');
     expect(await prisma.transaction.count({ where: { recurringTransactionId: recurring.id, paid: true, deletedAt: null } })).toBe(1);
+  });
+  describe('excluding a paid current occurrence', () => {
+    const exclusionAuth = { authorization: 'Bearer reversal-user' };
+
+    async function scheduleDaily(accountId: string, startDate: string): Promise<string> {
+      const recurring = await prisma.recurringTransaction.create({
+        data: {
+          householdId,
+          accountId,
+          categoryName: 'FOOD',
+          amount: new Prisma.Decimal('7.25'),
+          frequency: 'DAILY',
+          startDate: new Date(`${startDate}T00:00:00.000Z`),
+          nextRunAt: new Date(`${startDate}T00:00:00.000Z`),
+        },
+      });
+      return recurring.id;
+    }
+
+    async function payOccurrence(recurringId: string, date: string, clientMutationId: string): Promise<{ transactionId: string }> {
+      const response = await app.inject({
+        method: 'POST',
+        url: `/v1/recurring-transactions/${recurringId}/occurrences/${date}/pay`,
+        headers: exclusionAuth,
+        payload: { householdId, amount: { minorUnits: 725, currency: 'BRL' }, clientMutationId },
+      });
+      expect(response.statusCode).toBe(200);
+      return { transactionId: response.json().transactionId as string };
+    }
+
+    async function excludeOccurrence(recurringId: string, date: string, scope: string): Promise<LightMyRequestResponse> {
+      return app.inject({
+        method: 'POST',
+        url: `/v1/recurring-transactions/${recurringId}/occurrences/${date}/exclude`,
+        headers: exclusionAuth,
+        payload: { householdId, scope },
+      });
+    }
+
+    it('reverses the paid current occurrence, restores the bank balance and removes only that occurrence', async () => {
+      const date = todayUtc();
+      const accountId = await createBankAccount('Exclude paid ledger account', '100.00');
+      const recurringId = await scheduleDaily(accountId, date);
+      await payOccurrence(recurringId, date, '0a1b2c3d-4e5f-4061-8273-849a0b1c2d31');
+      expect(await balanceOf(accountId)).toBe('92.75');
+
+      const excluded = await excludeOccurrence(recurringId, date, 'CURRENT_ONLY');
+      expect(excluded.statusCode).toBe(200);
+      expect(excluded.json()).toMatchObject({ date, scope: 'CURRENT_ONLY', replayed: false });
+      expect(await balanceOf(accountId)).toBe('100.00');
+
+      const reversed = await prisma.transaction.findFirstOrThrow({ where: { recurringTransactionId: recurringId } });
+      expect(reversed.deletedAt).not.toBeNull();
+      expect(reversed.paid).toBe(true);
+
+      const repay = await app.inject({
+        method: 'POST',
+        url: `/v1/recurring-transactions/${recurringId}/occurrences/${date}/pay`,
+        headers: exclusionAuth,
+        payload: { householdId, amount: { minorUnits: 725, currency: 'BRL' }, clientMutationId: '1b2c3d4e-5f60-4172-8394-a5b6c7d8e9f0' },
+      });
+      expect(repay.statusCode).toBe(409);
+      expect(repay.json().error.code).toBe('RECURRING_OCCURRENCE_EXCLUDED');
+      expect(await balanceOf(accountId)).toBe('100.00');
+    });
+
+    it('leaves the series and other paid occurrences untouched', async () => {
+      const today = todayUtc();
+      const now = new Date();
+      const tomorrow = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString().slice(0, 10);
+      const accountId = await createBankAccount('Exclude series ledger account', '100.00');
+      const recurringId = await scheduleDaily(accountId, today);
+      await payOccurrence(recurringId, today, '2c3d4e5f-6071-4283-9405-b6c7d8e9f0a1');
+      const tomorrowPayment = await payOccurrence(recurringId, tomorrow, '3d4e5f60-7182-4394-8516-c7d8e9f0a1b2');
+      expect(await balanceOf(accountId)).toBe('85.50');
+      const before = await prisma.recurringTransaction.findUniqueOrThrow({ where: { id: recurringId } });
+
+      const excluded = await excludeOccurrence(recurringId, today, 'CURRENT_ONLY');
+      expect(excluded.statusCode).toBe(200);
+      expect(await balanceOf(accountId)).toBe('92.75');
+
+      const after = await prisma.recurringTransaction.findUniqueOrThrow({ where: { id: recurringId } });
+      expect(after).toMatchObject({ isActive: before.isActive, cancelledAt: before.cancelledAt, nextRunAt: before.nextRunAt });
+      expect(await prisma.transaction.findUniqueOrThrow({ where: { id: tomorrowPayment.transactionId } })).toMatchObject({ paid: true, deletedAt: null });
+    });
+
+    it('does not reverse twice on a repeated exclusion, sequential or concurrent', async () => {
+      const date = todayUtc();
+      const accountId = await createBankAccount('Exclude repeat ledger account', '100.00');
+      const recurringId = await scheduleDaily(accountId, date);
+      await payOccurrence(recurringId, date, '4e5f6071-8293-4a05-8627-d8e9f0a1b2c3');
+
+      const [first, second] = await Promise.all([
+        excludeOccurrence(recurringId, date, 'CURRENT_ONLY'),
+        excludeOccurrence(recurringId, date, 'CURRENT_ONLY'),
+      ]);
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(200);
+      expect([first.json().replayed, second.json().replayed].sort()).toEqual([false, true]);
+      expect(await balanceOf(accountId)).toBe('100.00');
+
+      const third = await excludeOccurrence(recurringId, date, 'CURRENT_ONLY');
+      expect(third.statusCode).toBe(200);
+      expect(third.json().replayed).toBe(true);
+      expect(await balanceOf(accountId)).toBe('100.00');
+      expect(await prisma.transaction.count({ where: { recurringTransactionId: recurringId, deletedAt: null } })).toBe(0);
+    });
+
+    it('keeps refusing a wider scope while the current occurrence is paid, with no balance change', async () => {
+      const date = todayUtc();
+      const accountId = await createBankAccount('Exclude wider scope ledger account', '100.00');
+      const recurringId = await scheduleDaily(accountId, date);
+      await payOccurrence(recurringId, date, '5f607182-9304-4b16-8738-e9f0a1b2c3d4');
+
+      const rejected = await excludeOccurrence(recurringId, date, 'CURRENT_AND_FUTURE');
+      expect(rejected.statusCode).toBe(409);
+      expect(rejected.json().error.code).toBe('RECURRING_OCCURRENCE_PAID');
+      expect(await balanceOf(accountId)).toBe('92.75');
+    });
   });
 });
