@@ -542,7 +542,9 @@ export async function payRecurringOccurrenceV1(
     endDate: rule.endDate,
   });
   if (!expectedDates.length) throw new NotFoundError('Recurring occurrence');
-  const existingTransaction = recurring.occurrences[0]?.transaction;
+  // A soft-deleted (reversed) transaction no longer occupies the occurrence: paying again must create a new one.
+  const linkedTransaction = recurring.occurrences[0]?.transaction;
+  const existingTransaction = linkedTransaction && !linkedTransaction.deletedAt ? linkedTransaction : undefined;
   if (existingTransaction?.paid) {
     if (input.accountId !== undefined && input.accountId !== existingTransaction.accountId) {
       throw new OccurrenceAccountConflictError('A paid occurrence cannot be reassigned to another account');
