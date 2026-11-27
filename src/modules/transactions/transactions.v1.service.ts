@@ -8,8 +8,8 @@ import { minorUnitsToDecimal, decimalToMinorUnits, moneyDtoSchema, type Currency
 import { createPaginatedResponse, buildPaginationArgs } from '../../shared/utils/pagination.js';
 import { isCustomCategoryName, toCustomCategoryId, toCustomCategoryName } from '../../shared/utils/categoryHelpers.js';
 import { prisma } from '../../shared/db/prisma.js';
-import { adjustInvoiceTotal, getOrCreateInvoiceForTransaction, signedInvoiceAmount } from '../credit-cards/domain/invoice-cycle.js';
-import { calculateBillingCycle, civilDateStringAtInstant } from '../credit-cards/domain/billing-cycle.js';
+import { adjustInvoiceTotal, getOrCreateInvoiceForTransaction, lockInvoiceForSelection, resolveInvoiceForCharge, signedInvoiceAmount, type InvoiceSelection } from '../credit-cards/domain/invoice-cycle.js';
+import { civilDateStringAtInstant } from '../credit-cards/domain/billing-cycle.js';
 import { appendSyncChange, findMutationReplay, payloadHash, saveMutationReceipt } from '../../shared/sync/idempotency.js';
 import { transactionV1DtoSchema, installmentGroupDeleteV1ResponseSchema, installmentGroupSummaryV1Schema, type CreateTransactionV1Input, type InstallmentGroupDeleteV1Response, type InstallmentGroupSummaryV1, type ListTransactionsV1Query, type TransactionV1Dto, type UpdateTransactionV1Input } from './transactions.v1.schema.js';
 
@@ -44,6 +44,35 @@ function validateCurrency(value: string): Currency {
 
 function civilDate(isoInstant: string): Date {
   return new Date(`${isoInstant.slice(0, 10)}T00:00:00.000Z`);
+}
+
+/** Calendar day of the instant in the transaction's own time zone (not the UTC day). */
+function localCivilDay(isoInstant: string, timeZone: string): Date {
+  return new Date(`${civilDateStringAtInstant(isoInstant, timeZone)}T00:00:00.000Z`);
+}
+
+function invoiceSelectionFrom(input: { invoiceId?: string | null; billingPeriodStart?: string }): InvoiceSelection | null {
+  if (input.invoiceId) return { invoiceId: input.invoiceId };
+  if (input.billingPeriodStart !== undefined) return { billingPeriodStart: input.billingPeriodStart };
+  return null;
+}
+
+async function invoicePeriodFor(
+  tx: Prisma.TransactionClient,
+  invoiceId: string | null,
+): Promise<{ periodStart: string; periodEnd: string; dueDate: string; status: InvoiceStatus } | null> {
+  if (invoiceId === null) return null;
+  const invoice = await tx.creditCardInvoice.findUnique({
+    where: { id: invoiceId },
+    select: { periodStart: true, periodEnd: true, dueDate: true, status: true },
+  });
+  if (!invoice) return null;
+  return {
+    periodStart: invoice.periodStart.toISOString().slice(0, 10),
+    periodEnd: invoice.periodEnd.toISOString().slice(0, 10),
+    dueDate: invoice.dueDate.toISOString().slice(0, 10),
+    status: invoice.status,
+  };
 }
 
 function balanceChange(
@@ -246,10 +275,29 @@ export async function createTransactionV1WithTx(
       throw new BadRequestError('Occurrence account currency must match the recurring schedule');
     }
   }
+  const selection = invoiceSelectionFrom(input);
+  const cardPreview = await tx.account.findFirst({
+    where: { id: input.accountId, householdId, isActive: true },
+    select: { type: true, closingDay: true, dueDay: true },
+  });
+  if (cardPreview?.type === AccountType.CREDIT) {
+    // Invoice before account: the same lock order as updateTransactionV1.
+    await lockInvoiceForSelection(tx, {
+      cardAccountId: input.accountId,
+      closingDay: cardPreview.closingDay,
+      dueDay: cardPreview.dueDay,
+      occurredAt,
+      timeZone: input.timeZone,
+      selection,
+    });
+  }
   const account = await requireAccount(tx, input.accountId, householdId, money.currency);
+  if (selection !== null && account.type !== AccountType.CREDIT) {
+    throw new BadRequestError('Invoice selection is only valid for credit card transactions');
+  }
   const categoryCode = await validateCategory(tx, input.categoryCode, householdId, type, recurringOccurrence !== undefined);
   const invoiceId = account.type === AccountType.CREDIT
-    ? await getOrCreateInvoiceForTransaction(tx, {
+    ? await resolveInvoiceForCharge(tx, {
         householdId,
         cardAccountId: account.id,
         currency: money.currency,
@@ -259,7 +307,7 @@ export async function createTransactionV1WithTx(
         timeZone: input.timeZone,
         amount,
         transactionType: input.kind === 'income' ? 'INCOME' : 'EXPENSE',
-      })
+      }, selection)
     : null;
   const transaction = await tx.transaction.create({
     data: {
@@ -268,7 +316,7 @@ export async function createTransactionV1WithTx(
       accountId: account.id,
       categoryName: categoryCode,
       amount,
-      date: civilDate(input.occurredAt),
+      date: localCivilDay(input.occurredAt, input.timeZone),
       occurredAt,
       timeZone: input.timeZone,
       invoiceId,
@@ -304,14 +352,15 @@ export async function createTransactionV1WithTx(
     toAccountId: transaction.toAccountId ?? null,
     paymentId: undefined,
   });
+  const dtoWithPeriod = { ...dto, invoicePeriod: await invoicePeriodFor(tx, invoiceId) };
   await appendSyncChange(tx, {
     householdId,
     entityType: 'transaction',
     entityId: transaction.id,
     version: transaction.version,
-    payload: dto,
+    payload: dtoWithPeriod,
   });
-  return dto;
+  return dtoWithPeriod;
 }
 
 export async function listTransactionsV1(query: ListTransactionsV1Query, householdId: string): Promise<TransactionV1Page> {
@@ -401,13 +450,17 @@ export async function updateTransactionV1(
     }
     const invoiceIdsToLock: Array<string | null> = [existing.invoiceId];
     const nextOccurredAt = input.occurredAt ? new Date(input.occurredAt) : existing.occurredAt;
-    if (existing.account.type === AccountType.CREDIT) {
-      const cycle = calculateBillingCycle(nextOccurredAt.toISOString(), existing.account.closingDay, existing.account.dueDay, input.timeZone ?? existing.timeZone);
-      const targetInvoice = await tx.creditCardInvoice.findUnique({
-        where: { cardAccountId_periodStart: { cardAccountId: existing.account.id, periodStart: new Date(`${cycle.periodStart}T00:00:00.000Z`) } },
-        select: { id: true },
-      });
-      invoiceIdsToLock.push(targetInvoice?.id ?? null);
+    // A card charge keeps its invoice when only the amount/category/note/paid change; a new date or time zone re-routes it by date.
+    const keepInvoice = existing.account.type === AccountType.CREDIT && input.occurredAt === undefined && input.timeZone === undefined;
+    if (existing.account.type === AccountType.CREDIT && !keepInvoice) {
+      invoiceIdsToLock.push(await lockInvoiceForSelection(tx, {
+        cardAccountId: existing.account.id,
+        closingDay: existing.account.closingDay,
+        dueDay: existing.account.dueDay,
+        occurredAt: nextOccurredAt,
+        timeZone: input.timeZone ?? existing.timeZone,
+        selection: null,
+      }));
     }
     await lockInvoiceLifecycle(tx, invoiceIdsToLock);
     const accountIdsToLock = [...new Set([existing.account.id, ...(accountChangeRequested && input.accountId ? [input.accountId] : [])])].sort();
@@ -443,17 +496,22 @@ export async function updateTransactionV1(
         if (invoice?.status === InvoiceStatus.PAID) throw new InvoicePaidError('A paid invoice transaction cannot be changed');
         await adjustInvoiceTotal(tx, existing.invoiceId, signedInvoiceAmount(existing.amount, kind === 'income' ? 'INCOME' : 'EXPENSE').negated());
       }
-      nextInvoiceId = await getOrCreateInvoiceForTransaction(tx, {
-        householdId,
-        cardAccountId: existing.account.id,
-        currency,
-        closingDay: existing.account.closingDay,
-        dueDay: existing.account.dueDay,
-        occurredAt: nextOccurredAt,
-        timeZone: input.timeZone ?? existing.timeZone,
-        amount: nextAmount,
-        transactionType: kind === 'income' ? 'INCOME' : 'EXPENSE',
-      });
+      if (keepInvoice && existing.invoiceId) {
+        nextInvoiceId = existing.invoiceId;
+        await adjustInvoiceTotal(tx, existing.invoiceId, signedInvoiceAmount(nextAmount, kind === 'income' ? 'INCOME' : 'EXPENSE'));
+      } else {
+        nextInvoiceId = await getOrCreateInvoiceForTransaction(tx, {
+          householdId,
+          cardAccountId: existing.account.id,
+          currency,
+          closingDay: existing.account.closingDay,
+          dueDay: existing.account.dueDay,
+          occurredAt: nextOccurredAt,
+          timeZone: input.timeZone ?? existing.timeZone,
+          amount: nextAmount,
+          transactionType: kind === 'income' ? 'INCOME' : 'EXPENSE',
+        });
+      }
     }
 
     if (existing.paid && kind !== 'transfer') {
@@ -469,7 +527,9 @@ export async function updateTransactionV1(
         ...(accountChangeRequested ? { accountId: nextAccount.id } : {}),
         amount: nextAmount,
         categoryName: nextCode,
-        date: input.occurredAt ? civilDate(input.occurredAt) : undefined,
+        date: input.occurredAt !== undefined || input.timeZone !== undefined
+          ? localCivilDay(nextOccurredAt.toISOString(), input.timeZone ?? existing.timeZone)
+          : undefined,
         occurredAt: input.occurredAt ? new Date(input.occurredAt) : undefined,
         timeZone: input.timeZone,
         invoiceId: nextInvoiceId,
@@ -486,13 +546,16 @@ export async function updateTransactionV1(
       include: { account: { select: { currency: true } } },
     });
     if (!updated?.account) throw new NotFoundError('Transaction');
-    const dto = transactionV1DtoSchema.parse(toDto({
-      ...updated,
-      currency: updated.account.currency,
-      fromAccountId: updated.fromAccountId ?? null,
-      toAccountId: updated.toAccountId ?? null,
-      paymentId: undefined,
-    }));
+    const dto = transactionV1DtoSchema.parse({
+      ...toDto({
+        ...updated,
+        currency: updated.account.currency,
+        fromAccountId: updated.fromAccountId ?? null,
+        toAccountId: updated.toAccountId ?? null,
+        paymentId: undefined,
+      }),
+      invoicePeriod: await invoicePeriodFor(tx, updated.invoiceId),
+    });
     await saveMutationReceipt(tx, identity, 'transaction', updated.id, dto);
     await appendSyncChange(tx, {
       householdId,

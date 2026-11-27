@@ -144,3 +144,30 @@ export function invoicePeriodForLegacyMonth(
     dueDate: formatDate(dueDate),
   };
 }
+
+/** The cycle that starts on `periodStart` (YYYY-MM-DD) for the card, or null when that date is not a cycle start. */
+export function billingCycleStartingOn(
+  periodStart: string,
+  closingDay: number | null,
+  dueDay: number | null,
+): BillingCycle | null {
+  const cycle = calculateBillingCycle(`${periodStart}T12:00:00.000Z`, closingDay, dueDay, 'UTC');
+  return cycle.periodStart === periodStart ? cycle : null;
+}
+
+/** The cycle containing `instant` in `timeZone`, followed by the next `followingCycles` cycles. */
+export function billingCycleWindow(
+  instant: string,
+  closingDay: number | null,
+  dueDay: number | null,
+  timeZone: string,
+  followingCycles: number,
+): BillingCycle[] {
+  const cycles: BillingCycle[] = [calculateBillingCycle(instant, closingDay, dueDay, timeZone)];
+  for (let index = 0; index < followingCycles; index += 1) {
+    const next = billingCycleStartingOn(cycles[cycles.length - 1]!.periodEnd, closingDay, dueDay);
+    if (next === null) throw new RangeError('Billing cycle window could not be resolved');
+    cycles.push(next);
+  }
+  return cycles;
+}

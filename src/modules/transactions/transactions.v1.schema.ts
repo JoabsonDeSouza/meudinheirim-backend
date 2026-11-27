@@ -3,7 +3,7 @@ import { moneyDtoSchema } from '../../shared/money/index.js';
 import { paginationSchema } from '../../shared/utils/pagination.js';
 import { categoryNameSchema } from '../categories/categories.schema.js';
 
-const timeZoneSchema = z.string().min(1).max(64).refine((value) => {
+export const timeZoneSchema = z.string().min(1).max(64).refine((value) => {
   try {
     new Intl.DateTimeFormat('en-US', { timeZone: value });
     return true;
@@ -19,6 +19,8 @@ export const transactionAmountV1Schema = moneyDtoSchema.refine(
   'Transaction amount must be positive',
 );
 
+export const billingPeriodStartSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'billingPeriodStart must be YYYY-MM-DD');
+
 export const createTransactionV1Schema = z.object({
   householdId: z.string().uuid().optional(),
   clientMutationId: z.string().uuid(),
@@ -30,7 +32,11 @@ export const createTransactionV1Schema = z.object({
   timeZone: timeZoneSchema,
   note: z.string().max(1000).optional(),
   paid: z.boolean().default(true),
-}).strict();
+  invoiceId: z.string().uuid().nullable().optional(),
+  billingPeriodStart: billingPeriodStartSchema.optional(),
+}).strict().refine((value) => !(value.invoiceId && value.billingPeriodStart), {
+  message: 'Send either invoiceId or billingPeriodStart, not both',
+});
 
 export type CreateTransactionV1Input = z.infer<typeof createTransactionV1Schema>;
 
@@ -93,6 +99,12 @@ export const transactionV1DtoSchema = z.object({
   paidAt: z.string().datetime().nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
+  invoicePeriod: z.object({
+    periodStart: z.string(),
+    periodEnd: z.string(),
+    dueDate: z.string(),
+    status: z.enum(['OPEN', 'CLOSED', 'PAID']),
+  }).nullable().optional(),
   deletedAt: z.string().datetime().nullable(),
   version: z.number().int().positive(),
   clientMutationId: z.string().uuid(),
