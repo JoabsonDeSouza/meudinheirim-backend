@@ -188,7 +188,7 @@ export async function recurringV1Routes(app: FastifyInstance): Promise<void> {
 
   app.post('/:recurringId/occurrences/:occurrenceDate/exclude', {
     schema: {
-      description: 'Exclude one unpaid occurrence, this and future unpaid occurrences, or only future unpaid occurrences; paid history is preserved',
+      description: 'Exclude one occurrence. CURRENT_ONLY on a paid occurrence reverses its transaction atomically (account balance restored). CURRENT_AND_FUTURE on a paid current occurrence and FUTURE_ONLY leave paid history untouched and never reverse it.',
       tags: ['Recurring Transactions'], security: [{ bearerAuth: [] }],
       params: { type: 'object', required: ['recurringId', 'occurrenceDate'], additionalProperties: false, properties: {
         recurringId: { type: 'string', format: 'uuid' }, occurrenceDate: { type: 'string', format: 'date' },
@@ -196,9 +196,16 @@ export async function recurringV1Routes(app: FastifyInstance): Promise<void> {
       body: { type: 'object', required: ['scope'], additionalProperties: false, properties: {
         householdId: { type: 'string', format: 'uuid' }, scope: { type: 'string', enum: ['CURRENT_ONLY', 'CURRENT_AND_FUTURE', 'FUTURE_ONLY'] },
       } },
-      response: { 200: { type: 'object', required: ['recurringTransactionId', 'date', 'scope', 'replayed'], additionalProperties: false, properties: {
+      response: { 200: { type: 'object', required: ['recurringTransactionId', 'date', 'scope', 'replayed', 'reversedPayment'], additionalProperties: false, properties: {
         recurringTransactionId: { type: 'string', format: 'uuid' }, date: { type: 'string', format: 'date' },
         scope: { type: 'string', enum: ['CURRENT_ONLY', 'CURRENT_AND_FUTURE', 'FUTURE_ONLY'] }, replayed: { type: 'boolean' },
+        reversedPayment: { type: ['object', 'null'], required: ['transactionId', 'accountId', 'amount', 'balanceRestored'], additionalProperties: false, properties: {
+          transactionId: { type: 'string', format: 'uuid' }, accountId: { type: 'string', format: 'uuid' },
+          amount: { type: 'object', required: ['minorUnits', 'currency'], additionalProperties: false, properties: {
+            minorUnits: { type: 'integer' }, currency: { type: 'string', enum: ['BRL', 'USD'] },
+          } },
+          balanceRestored: { type: 'boolean', const: true },
+        } },
       } } },
     },
   }, async (request, reply) => {

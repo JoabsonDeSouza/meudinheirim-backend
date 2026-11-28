@@ -122,13 +122,13 @@ describe('managed recurring occurrence exclusion', () => {
     expect(await prisma.transaction.count({ where: { recurringTransactionId: id, deletedAt: null } })).toBe(0);
   });
 
-  it('rejects excluding a paid selected date but preserves paid later history after an inclusive cutoff', async () => {
+  it('rejects a paid selected date for CURRENT_AND_FUTURE but preserves paid later history after an inclusive cutoff', async () => {
     const id = await createSchedule('2026-01-10');
     const paid = await app.inject({ method: 'POST', url: `/v1/recurring-transactions/${id}/occurrences/2026-03-10/pay`, headers, payload: {
       householdId, amount: { minorUnits: 7300, currency: 'BRL' }, clientMutationId: '40b52ce1-4656-48b5-a92a-81f2fc6b5992',
     } });
     expect(paid.statusCode).toBe(200);
-    const conflict = await exclude(id, '2026-03-10', 'CURRENT_ONLY');
+    const conflict = await exclude(id, '2026-03-10', 'CURRENT_AND_FUTURE');
     expect(conflict.statusCode).toBe(409);
     expect(conflict.json().error.code).toBe('RECURRING_OCCURRENCE_PAID');
     expect((await exclude(id, '2026-02-10', 'CURRENT_AND_FUTURE')).statusCode).toBe(200);

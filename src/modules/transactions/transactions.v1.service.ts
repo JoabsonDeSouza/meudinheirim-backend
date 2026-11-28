@@ -268,8 +268,12 @@ export async function createTransactionV1WithTx(
       where: { recurringTransactionId_occurrenceDate: { recurringTransactionId: recurringOccurrence.recurringTransactionId, occurrenceDate: recurringOccurrence.occurrenceDate } },
       include: { transaction: { include: { account: { select: { currency: true } } } } },
     });
-    if (existing?.transaction.account) {
+    if (existing?.transaction.account && !existing.transaction.deletedAt) {
       return toDto({ ...existing.transaction, currency: existing.transaction.account.currency });
+    }
+    if (existing) {
+      // The occurrence's previous transaction was reversed (soft-deleted): release the slot so this payment is recorded.
+      await tx.recurringOccurrence.delete({ where: { id: existing.id } });
     }
     if (recurring.account.currency !== money.currency) {
       throw new BadRequestError('Occurrence account currency must match the recurring schedule');

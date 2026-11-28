@@ -351,13 +351,20 @@ export async function cancelRecurringV1(recurringId: string, householdId: string
   return toRecurringDto(row);
 }
 
+export interface ReversedRecurringPaymentDto {
+  transactionId: string;
+  accountId: string;
+  amount: { minorUnits: number; currency: Currency };
+  balanceRestored: true;
+}
+
 export async function excludeRecurringOccurrenceV1(
   recurringId: string,
   occurrenceDate: string,
   householdId: string,
   userId: string,
   scope: 'CURRENT_ONLY' | 'CURRENT_AND_FUTURE' | 'FUTURE_ONLY',
-): Promise<{ recurringTransactionId: string; date: string; scope: typeof scope; replayed: boolean }> {
+): Promise<{ recurringTransactionId: string; date: string; scope: typeof scope; replayed: boolean; reversedPayment: ReversedRecurringPaymentDto | null }> {
   const selectedDate = new Date(`${occurrenceDate}T00:00:00.000Z`);
   return prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT id FROM recurring_transactions WHERE id = ${recurringId}::uuid AND household_id = ${householdId}::uuid FOR UPDATE`;
@@ -385,14 +392,17 @@ export async function excludeRecurringOccurrenceV1(
       : selectedDate;
     const materialized = await tx.recurringOccurrence.findMany({
       where: { recurringTransactionId: recurringId, occurrenceDate: scope === 'CURRENT_ONLY' ? selectedDate : { gte: firstAffectedDate } },
-      include: { transaction: true },
+      include: { transaction: { include: { account: { select: { currency: true } } } } },
     });
-    if (scope !== 'FUTURE_ONLY' && materialized.some((item) => item.occurrenceDate.getTime() === selectedDate.getTime() && item.transaction.paid && !item.transaction.deletedAt)) {
+    // CURRENT_ONLY on a paid occurrence reverses its linked transaction atomically (balance/invoice restored via the
+    // transaction soft-delete guards). Wider scopes still refuse, so paid history of a series is never reversed implicitly.
+    if (scope === 'CURRENT_AND_FUTURE' && materialized.some((item) => item.occurrenceDate.getTime() === selectedDate.getTime() && item.transaction.paid && !item.transaction.deletedAt)) {
       throw new RecurringOccurrencePaidError();
     }
     let changed = false;
     for (const item of materialized) {
-      if (item.transaction.paid || item.transaction.deletedAt) continue;
+      if (item.transaction.deletedAt) continue;
+      if (item.transaction.paid && scope !== 'CURRENT_ONLY') continue;
       await softDeleteTransactionV1WithTx(tx, item.transactionId, householdId, userId, randomUUID(), item.transaction.version);
       changed = true;
     }
@@ -414,7 +424,17 @@ export async function excludeRecurringOccurrenceV1(
         changed = true;
       }
     }
-    return { recurringTransactionId: recurringId, date: occurrenceDate, scope, replayed: !changed };
+    // CURRENT_ONLY reports the payment it reversed (or already reversed, on replay) so the client can show the restored value.
+    const currentPayment = scope === 'CURRENT_ONLY' ? materialized.find((item) => item.transaction.paid) : undefined;
+    const reversedPayment: ReversedRecurringPaymentDto | null = currentPayment?.transaction.accountId && currentPayment.transaction.account
+      ? {
+        transactionId: currentPayment.transactionId,
+        accountId: currentPayment.transaction.accountId,
+        amount: { minorUnits: decimalToMinorUnits(currentPayment.transaction.amount, currency(currentPayment.transaction.account.currency)), currency: currency(currentPayment.transaction.account.currency) },
+        balanceRestored: true,
+      }
+      : null;
+    return { recurringTransactionId: recurringId, date: occurrenceDate, scope, replayed: !changed, reversedPayment };
   }, { timeout: 30000 });
 }
 
@@ -542,7 +562,9 @@ export async function payRecurringOccurrenceV1(
     endDate: rule.endDate,
   });
   if (!expectedDates.length) throw new NotFoundError('Recurring occurrence');
-  const existingTransaction = recurring.occurrences[0]?.transaction;
+  // A soft-deleted (reversed) transaction no longer occupies the occurrence: paying again must create a new one.
+  const linkedTransaction = recurring.occurrences[0]?.transaction;
+  const existingTransaction = linkedTransaction && !linkedTransaction.deletedAt ? linkedTransaction : undefined;
   if (existingTransaction?.paid) {
     if (input.accountId !== undefined && input.accountId !== existingTransaction.accountId) {
       throw new OccurrenceAccountConflictError('A paid occurrence cannot be reassigned to another account');
