@@ -2,6 +2,13 @@
 
 All endpoints require Firebase bearer authentication. Account operations resolve household ownership from server-side membership; mutations require an editor role. Amounts and currencies remain explicit, and this API does not convert currency.
 
+## Listing totals
+
+- `GET /v1/accounts?householdId=` returns `accounts` (each with its own `balance`, including cards) and `totals: [{currency, amount}]`.
+- `totals` is the bank balance: sum of `balance` for active, non-`CREDIT` accounts of the household, grouped by currency. `CREDIT` cards are excluded because their balance is outstanding debt stored as a positive amount. Shared accounts are not included.
+- `CHECKING`, `SAVINGS`, `CASH` and `INVESTMENT` accounts are included, as before this rule.
+- Currencies are never mixed or converted. A household with only a USD card has no `totals` entry for USD.
+
 ## Primary credit card
 
 - `POST /v1/accounts/:accountId/primary-card` selects a primary card. No body is required. Returns `{success:true,data:<account>}`.

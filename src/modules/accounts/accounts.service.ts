@@ -308,10 +308,14 @@ export async function listAccounts(query: ListAccountsQuery, userId?: string): P
     }
   }
 
-  // Calculate totals by currency (only from household accounts, not shared)
+  // Totals by currency = bank balance ("Saldo nas contas bancárias").
+  // Only active household accounts; shared accounts are excluded. CREDIT cards are excluded:
+  // their balance is outstanding debt stored as a positive amount, and adding it would inflate the bank balance.
+  // Each card still reports its own balance in `accounts`. Currencies are never mixed or converted.
   const totals = householdAccounts.reduce(
     (acc: Record<string, Prisma.Decimal>, account) => {
       if (!account.isActive) return acc;
+      if (account.type === AccountType.CREDIT) return acc;
       const currency = account.currency;
       if (!acc[currency]) {
         acc[currency] = new Prisma.Decimal(0);
